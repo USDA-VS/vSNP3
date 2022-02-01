@@ -121,3 +121,4 @@ See `-h` option for detail and usage
 - all_vcf named as defining SNP column label
 - Removed Picard which drops Java requirements thus providing easier installation
 - Strict sample/VCF file naming requirements when matching metadata names.  Using the two column metadata Excel worksheet first column must match VCF file exactly, else minus ".vcf",  else minus "_zc.vcf", else no match.
+- Improved organization of casacading SNP tables.
