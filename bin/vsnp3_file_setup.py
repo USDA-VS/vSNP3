@@ -156,7 +156,7 @@ class Latex_Report:
         print(r'\renewcommand\familydefault{\sfdefault}', file=tex)
         print(r'\usepackage[T1]{fontenc}', file=tex)
         print(r'\usepackage{xcolor}', file=tex)
-        print(r'\lhead{\begin{picture}(0,0) \put(0,0){\includegraphics[width=40mm]{}} \end{picture}}', file=tex)
+        print(r'\lhead{\begin{picture}(0,0) \put(0,0){\includegraphics[width=40mm]{/project/bioinformatic_databases/usdalogo.png}} \end{picture}}', file=tex)
         current_date = datetime.now().strftime('%B %d, %Y')
         print(r'\rhead{\begin{date} \textbf{\large ' + current_date + r'} \end{date}}', file=tex)
         print(r'\begin{adjustbox}{width=1\textwidth} \\', file=tex)

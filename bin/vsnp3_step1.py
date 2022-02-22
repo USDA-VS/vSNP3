@@ -26,14 +26,15 @@ from vsnp3_group_reporter import GroupReporter
 class vSNP3_Step1(Setup):
     ''' 
     '''
-    def __init__(self, FASTA=None, FASTQ_R1=None, FASTQ_R2=None, gbk=None, reference_type=None, skip_assembly=None, debug=False):
+    def __init__(self, FASTA=None, FASTQ_R1=None, FASTQ_R2=None, gbk=None, reference_type=None, nanopore=False, assemble_unmap=None, debug=False):
         '''
         Start at class call
         '''
         Setup.__init__(self, FASTQ_R1=FASTQ_R1)
-        self.skip_assembly = skip_assembly
+        self.assemble_unmap = assemble_unmap
         self.latex_report = Latex_Report(self.sample_name)
         self.excel_stats = Excel_Stats(self.sample_name)
+        self.nanopore = nanopore
         if FASTA: #IF -f REFERENCE FASTA PROVIDED USE IT, ie .fasta
             concatenated_FASTA = self.concat_fasta(FASTA) # -f option for FASTA will take wildcard for multiple FASTAs
             Setup.__init__(self, FASTA=concatenated_FASTA, FASTQ_R1=FASTQ_R1, FASTQ_R2=FASTQ_R2, gbk=gbk, debug=debug)
@@ -122,8 +123,15 @@ class vSNP3_Step1(Setup):
             spoligo.spoligo()
             spoligo.latex(self.latex_report.tex)
             spoligo.excel(self.excel_stats.excel_dict)
+
+        if int(float(fastq_stats.R1.max_len.replace(',', ''))) > 601:
+            nanopore = True
+        elif self.nanopore:
+            nanopore = True
+        else:
+            nanopore = False
             
-        alignment = Alignment(FASTQ_R1=self.FASTQ_R1, FASTQ_R2=self.FASTQ_R2, reference=self.reference, gbk=self.gbk, skip_assembly=self.skip_assembly, debug=self.debug)
+        alignment = Alignment(FASTQ_R1=self.FASTQ_R1, FASTQ_R2=self.FASTQ_R2, reference=self.reference, nanopore=nanopore, gbk=self.gbk, assemble_unmap=self.assemble_unmap, debug=self.debug)
         alignment.run()
 
         if self.reference_type:
@@ -188,6 +196,7 @@ class vSNP3_Step1(Setup):
         #     print(f'{bcolors.WHITE}{self.fastq_name}{bcolors.ENDC} {color_quality}N/A - Poor or Questionable Reference{bcolors.ENDC} Sample Contamination')
 
         self.programs = alignment.programs
+        self.alignment_vcf_run_summary = alignment.alignment_vcf_run_summary
         self.latex_report.latex_ending()
         self.excel_stats.post_excel()
 
@@ -236,7 +245,8 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     parser.add_argument('-f', '--FASTA', nargs='*', dest='FASTA', required=False, help='FASTA file to be used as reference.  Multiple can be specified with wildcard')
     parser.add_argument('-b', '--gbk', nargs='*', dest='gbk', required=False, default=None, help='Optional: gbk to annotate VCF file.  Multiple can be specified with wildcard')
     parser.add_argument('-t', '--reference_type', action='store', dest='reference_type', required=False, default=None, help="Optional: Provide directory name with FASTA and GBK file/s")
-    parser.add_argument('-skip_assembly', '--skip_assembly', action='store_true', dest='skip_assembly', help='Optional: skip assembly of unmapped reads')
+    parser.add_argument('-n', '--nanopore', action='store_true', dest='nanopore', default=False, help='if true run alignment optimized for nanopore reads')
+    parser.add_argument('-assemble_unmap', '--assemble_unmap', action='store_true', dest='assemble_unmap', help='Optional: skip assembly of unmapped reads')
     parser.add_argument('-d', '--debug', action='store_true', dest='debug', help='keep spades output directory')
     parser.add_argument('-v', '--version', action='version', version=f'{os.path.basename(__file__)}: version {__version__}')
     args = parser.parse_args()
@@ -251,12 +261,15 @@ if __name__ == "__main__": # execute if directly access by the interpreter
         if hasattr(module, '__version__') and name in program_list: 
             python_programs.append(f'{name}, {module.__version__}')
 
-    vsnp = vSNP3_Step1(FASTQ_R1=args.FASTQ_R1, FASTQ_R2=args.FASTQ_R2, FASTA=args.FASTA, gbk=args.gbk, reference_type=args.reference_type, skip_assembly=args.skip_assembly, debug=args.debug)
+    vsnp = vSNP3_Step1(FASTQ_R1=args.FASTQ_R1, FASTQ_R2=args.FASTQ_R2, FASTA=args.FASTA, gbk=args.gbk, reference_type=args.reference_type, nanopore=args.nanopore, assemble_unmap=args.assemble_unmap, debug=args.debug)
     vsnp.run()
 
     with open('run_log.txt', 'w') as run_log:
         print(f'\n{os.path.basename(__file__)} SET ARGUMENTS:', file=run_log)
         print(args, file=run_log)
+        print('\nCall Summary:', file=run_log)
+        for each in vsnp.alignment_vcf_run_summary:
+            print(each, file=run_log)
         print('\nVersions:', file=run_log)
         for each in python_programs:
             print(each, file=run_log)
