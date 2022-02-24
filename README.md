@@ -16,6 +16,8 @@ Anaconda with Python 3.7 or greater, 3.9 recommended.
 conda install vsnp3 -c bioconda
 ```
 
+See [link](https://docs.conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html) for managing environment.
+
 ## Installation test
 ```
 which vsnp3_step1.py
