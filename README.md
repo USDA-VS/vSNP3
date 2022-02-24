@@ -10,7 +10,7 @@ Whole genome sequencing for disease tracing and outbreak investigations is routi
 
 User is expected to be familiar with the command-line and able to install [conda](https://www.anaconda.com/products/individual).
 
-Anaconda with Python 3.6 or greater, 3.9 recommended.
+Anaconda with Python 3.7 or greater, 3.9 recommended.
 
 ```
 conda install vsnp3 -c bioconda
