@@ -1,10 +1,10 @@
 # vSNP3
 
-This is an introduction to vSNP version 3.  Version 2 of [vSNP](https://github.com/USDA-VS/vSNP). 
+This is an introduction to vSNP version 3.  A comprehensive overview is of vSNP version 2 is [here](https://github.com/USDA-VS/vSNP).
 
-vSNP3 generates BAM, VCF and annotated SNP tables and corresponding phylogenetic tree files for high resolution SNP analysis.
+vSNP3 generates BAM, VCF and annotated SNP tables and corresponding phylogenetic trees to achieve a high resolution SNP analysis.
 
-Whole genome sequencing for disease tracing and outbreak investigations is routinely required for high consequence diseases.  vSNP is an accreditation-friendly and robust tool, designed for easy error correction and SNP validation... vSNP. vSNP generates annotated SNP tables and corresponding phylogenetic trees that can be scaled for reporting purposes.   It is able to process large scale datasets, and can accommodate multiple references.
+Whole genome sequencing for disease tracing and outbreak investigations is routinely required for high consequence diseases.  vSNP is an accreditation-friendly and robust tool, designed for easy error correction and SNP __v__alidation... vSNP. vSNP generates annotated SNP tables and corresponding phylogenetic trees that can be scaled for reporting purposes.   It is able to process large scale datasets, and can accommodate multiple references.
 
 ## Conda installation
 
