@@ -4,7 +4,7 @@ This is an introduction to vSNP version 3.  A comprehensive overview is of vSNP 
 
 vSNP3 generates BAM, VCF and annotated SNP tables and corresponding phylogenetic trees to achieve a high resolution SNP analysis.
 
-Whole genome sequencing for disease tracing and outbreak investigations is routinely required for high consequence diseases.  vSNP is an accreditation-friendly and robust tool, designed for easy error correction and SNP <u>v</u>alidation... vSNP. vSNP generates annotated SNP tables and corresponding phylogenetic trees that can be scaled for reporting purposes.   It is able to process large scale datasets, and can accommodate multiple references.
+Whole genome sequencing for disease tracing and outbreak investigations is routinely required for high consequence diseases.  vSNP is an accreditation-friendly and robust tool, designed for easy error correction and SNP <ins>v</ins>alidation... vSNP. vSNP generates annotated SNP tables and corresponding phylogenetic trees that can be scaled for reporting purposes.   It is able to process large scale datasets, and can accommodate multiple references.
 
 ## Conda installation
 
