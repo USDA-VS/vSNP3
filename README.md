@@ -119,10 +119,10 @@ See `-h` option for detail and usage
 - Version and option capturing enhancements
 - Enhanced file input options
 - Minimap2 replacing BWA
-- Oxford Nanopore read compatiable
+- Oxford Nanopore read compatible
 - all_vcf named as defining SNP column label
 - Removed Picard which drops Java requirements thus providing easier installation
 - Strict sample/VCF file naming requirements when matching metadata names.  Using the two column metadata Excel worksheet first column must match VCF file exactly, else minus ".vcf",  else minus "_zc.vcf", else no match.
-- Improved organization of casacading SNP tables.
+- Improved organization of cascading SNP tables.
 - Unmapped reads not assembled by default.  New flag to request assembly of unmapped reads.
 - Detailed steps recorded in run_log.txt.
