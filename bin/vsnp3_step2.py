@@ -46,23 +46,25 @@ class VCF_to_DF():
             print(f'VCF file count {self.vcf_original_count}')
             for vcf in vcf_list:
                 print(vcf)
-                vcf, df = self.check_and_fix(vcf)
+                vcf, df, vcf_bad_list_temp = self.check_and_fix(vcf)
                 try:
                     self.chrom = df['CHROM'].iloc[0]
                 except TypeError:
                     pass
                 if df is not None:
                     dataframes[os.path.basename(vcf)] = df
+                self.vcf_bad_list = self.vcf_bad_list + vcf_bad_list_temp
         else:
             print(f'Fixing: Pool processing with {cpu_count} cpus...')
             with futures.ProcessPoolExecutor(max_workers=cpu_count) as pool: #ProcessPoolExecutor ThreadPoolExecutor ## process works best for calling on multiple files
-                for vcf, df in pool.map(self.check_and_fix, vcf_list):
+                for vcf, df, vcf_bad_list_temp in pool.map(self.check_and_fix, vcf_list):
                     try:
                         self.chrom = df['CHROM'].iloc[0]
                     except TypeError:
                         pass
                     if df is not None:
                         dataframes[os.path.basename(vcf)] = df
+                    self.vcf_bad_list = self.vcf_bad_list + vcf_bad_list_temp
         self.dataframes = dataframes
         print (f'\n\nDictionary of dataframes to memory runtime: {datetime.now() - self.startTime}\n')
         # if write_out: # write out pickle file can be used in downstream applications
@@ -72,6 +74,7 @@ class VCF_to_DF():
             os.remove('dictionary_of_dataframes.pickle')
 
     def check_and_fix(self, vcf):
+        vcf_bad_list_temp = []
         try:
             self.vcf_fix(vcf)
             df = allel.vcf_to_dataframe(vcf, fields=['variants/CHROM', 'variants/POS', 'variants/QUAL', 'variants/REF', 'variants/ALT', 'variants/AC', 'variants/DP', 'variants/MQ'], alt_number=1)
@@ -82,11 +85,15 @@ class VCF_to_DF():
                 df = allel.vcf_to_dataframe(vcf, fields=['variants/CHROM', 'variants/POS', 'variants/QUAL', 'variants/REF', 'variants/ALT', 'variants/AC', 'variants/DP', 'variants/MQ'], alt_number=1)
                 df['abs_pos'] = df['CHROM'] + ':' + df['POS'].astype(str)
             except:
-                self.vcf_bad_list.append(vcf)
+                vcf_bad_list_temp.append(vcf)
                 os.remove(vcf)
                 df = None
-        df = df.drop_duplicates(subset=['abs_pos'])
-        return vcf, df
+        try:
+            df = df.drop_duplicates(subset=['abs_pos'])
+        except AttributeError:
+            # pass if df is empty, NoneType
+            pass
+        return vcf, df, vcf_bad_list_temp
 
     def vcf_fix(self, vcf):
         temp_file = vcf + ".temp"
@@ -268,7 +275,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     parser.add_argument('-n', '--no_filters', action='store_true', dest='no_filters', default=False, help='Optional: turn off filters')
     parser.add_argument('-w', '--qual_threshold', action='store', dest='qual_threshold', default=150, required=False, help='Optional: Minimum QUAL threshold for calling a SNP')
     parser.add_argument('-x', '--n_threshold', action='store', dest='n_threshold', default=50, required=False, help='Optional: Minimum N threshold.  SNPs between this and qual_threshold are reported as N')
-    parser.add_argument('-y', '--mq_threshold', action='store', dest='mq_threshold', default=58, required=False, help='Optional: At least one position per group must have this minimum MQ threshold to be called.')
+    parser.add_argument('-y', '--mq_threshold', action='store', dest='mq_threshold', default=56, required=False, help='Optional: At least one position per group must have this minimum MQ threshold to be called.')
     parser.add_argument('-f', '--fix_vcfs', action='store_true', dest='fix_vcfs', help='Optional: Just fix VCF files and exit')
     parser.add_argument('-remove', '--remove', action='store_true', dest='remove', help='Optional: Remove VCF files from current working directory when VCF files in current working director are used, that is when --wd is not used VCF files are removed with option.  VCF files are still zipped in "vcf_starting_files.zip".')
     parser.add_argument('-a', '--all_vcf', action='store_true', dest='all_vcf', required=False, help='Optional: create table with all isolates')
@@ -348,13 +355,17 @@ if __name__ == "__main__": # execute if directly access by the interpreter
         shutil.copy(args.defining_snps, starting_files) #package with starting files for the record
     zipit(starting_files, starting_files) # zip starting files directory
 
-    group = Group(cwd=global_working_dir, metadata=args.metadata, defining_snps=args.defining_snps, excel_remove=args.remove_by_name, gbk_list=args.gbk, dataframes=vcf_to_df.dataframes, all_vcf=args.all_vcf, find_new_filters=args.find_new_filters, no_filters=args.no_filters, qual_threshold=args.qual_threshold, n_threshold=args.n_threshold, mq_threshold=args.mq_threshold, abs_pos=args.abs_pos, group=args.group, debug=args.debug)
+    group = Group(cwd=global_working_dir, metadata=args.metadata, defining_snps=args.defining_snps, excel_remove=args.remove_by_name, gbk_list=args.gbk, dataframes=vcf_to_df.dataframes, all_vcf=args.all_vcf, find_new_filters=args.find_new_filters, no_filters=args.no_filters, qual_threshold=int(args.qual_threshold), n_threshold=int(args.n_threshold), mq_threshold=int(args.mq_threshold), abs_pos=args.abs_pos, group=args.group, debug=args.debug)
     vcf_to_df.vcf_bad_list = vcf_to_df.vcf_bad_list + group.vcf_bad_list
 
     #by default the VCF files used are not deleted.  They are only deleted when using --remove option AND the files were ran from the current working directory.  ie the --wd option was not used.:
     if args.remove and cwd_test:
         for each_vcf in vcf_list:
-            os.remove(each_vcf)
+            try:
+                os.remove(each_vcf)
+            except FileNotFoundError:
+                # if file was previously removed such as it was empty
+                pass
 
     setup.print_time()
     HTML_Summary(runtime=setup.run_time, vcf_to_df=vcf_to_df, reference=ro.select_ref, groupings_dict=group.groupings_dict, raxml_version=group.raxml_version, all_vcf_boolen=args.all_vcf, args=args, removed_samples=remove_list) 

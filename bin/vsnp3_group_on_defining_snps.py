@@ -41,7 +41,7 @@ class bcolors:
 class Group():
     ''' 
     '''
-    def __init__(self, cwd=None, metadata=None, excel_remove=None, gbk_list=None, defining_snps=None, dataframes=None, pickle_file=None, abs_pos=None, group=None, all_vcf=None, find_new_filters=None, no_filters=True, qual_threshold=150, n_threshold=50, mq_threshold=58, debug=False):
+    def __init__(self, cwd=None, metadata=None, excel_remove=None, gbk_list=None, defining_snps=None, dataframes=None, pickle_file=None, abs_pos=None, group=None, all_vcf=None, find_new_filters=None, no_filters=True, qual_threshold=150, n_threshold=50, mq_threshold=56, debug=False):
 
         self.qual_threshold = qual_threshold
         self.n_threshold = n_threshold
@@ -172,8 +172,7 @@ class Group():
                 single_df = single_df[~single_df['abs_pos'].isin(filter_all_list)]
             # First iteration.  Find good SNPs for each VCF.  There must be at least one good SNP to include position in table
             try:
-                #& (single_df['MQ'] > self.mq_threshold)
-                single_df = single_df[(single_df['QUAL'] > self.qual_threshold) & (single_df['AC'] == 2) & (single_df['REF'].str.len() == 1) & (single_df['ALT'].str.len() == 1)]
+                single_df = single_df[(single_df['QUAL'] > self.qual_threshold) & (single_df['AC'] == 2) & (single_df['REF'].str.len() == 1) & (single_df['ALT'].str.len() == 1) & (single_df['MQ'] >= self.mq_threshold)]
             except AttributeError:
                 print(f'\n### Error with sample {sample}\nSee VCF file and rerun\n')
                 sys.exit(1)
@@ -400,6 +399,7 @@ class Group():
             for name, df in sample_dict.items():
                 print(f'>{name}', file=write_out)
                 try:
+                    df = df.sort_values(by=['abs_pos']) # sorting ensures positions are aligned
                     # print(f'{name}: {len("".join(df["ALT"].to_list()))}') # use to troubleshoot if FASTAs are not aligning to the same length
                     print("".join(df['ALT'].to_list()), file=write_out)
                 except KeyError:
@@ -424,12 +424,14 @@ class Group():
         df_ref = df.drop_duplicates(subset='abs_pos', keep="first") # df_ref will be all abs_pos per group.  completion of first iteration
         norm_sample_dict={}
         position_list=[]
+        position_list_parse_test = []
         for sample in sample_dict.keys(): # update grouping sample_dict with normalized dataframes
             # dataframes_names_updated contains all SNPs
             # dataframe_essentials contains good SNP positions
             sample_df = self.dataframes_names_updated[sample]
             sample_df = sample_df[sample_df['abs_pos'].isin(df_ref['abs_pos'])] # this will normalize positions
-            
+            #https://stackoverflow.com/questions/27673231/why-should-i-make-a-copy-of-a-data-frame-in-pandas
+            sample_df_parse_test = sample_df.copy() # to use below            
             sample_df.loc[sample_df['ALT'].str.len() > 1, 'ALT'] = 'N'
             sample_df.loc[sample_df['ALT'] == 'N', 'AC'] = 2 # allow the above line to pass ambigious if needed        
             try: #change AC=1 to ambigious
@@ -458,8 +460,24 @@ class Group():
             position_list.extend(list(df_merged['abs_pos'] + list(df_merged['ALT']))) #make position unique on ALT call for parsimony selection
             norm_sample_dict[sample] = df_merged[['abs_pos', 'ALT']]
             
+            ####
+            #Do not include low quality calls when determining if position is parsimonious.  Only include calls with QUAL >= qual_threshold [150]
+            try:
+                sample_df_parse_test.loc[sample_df_parse_test['REF'].str.len() > 1, 'REF'] = 'N' #if REF call is indel change to N to maintain equal sequence length for all samples
+                sample_df_parse_test.loc[sample_df_parse_test['QUAL'] < self.qual_threshold, 'ALT'] = sample_df_parse_test['ALT'] # change n_threshold from above to qual threshold skipping the Ns when determining if position is parsimonious AND changed to 'ALT'.  So, if there are just a few low quality represented the SNP position will be seen as parisomonious uninformative and removed.
+            except (ValueError) as e:
+                if self.debug:
+                    print(print(f'\n\t#####\n\t##### {e}, Sample: {sample}\n\t#####\n'))
+            sample_df_parse_test = sample_df_parse_test[['abs_pos', 'ALT']] # no longer need other columns
+            sample_df_parse_test = sample_df_parse_test.replace(np.nan, '-', regex=True) # change zero coverage to -
+            df_merged_parse_test = sample_df_parse_test.merge(df_ref, left_on='abs_pos', right_on='abs_pos', how='outer') # finish normalizing if df doesn't include all position in group
+            df_merged_parse_test['ALT'] = np.where(df_merged_parse_test['ALT'].notna(), df_merged_parse_test['ALT'], df_merged_parse_test['REF']) # merge REF from df_ref to ALT column
+            df_merged_parse_test['ALT'] = df_merged_parse_test['ALT'].fillna('-')
+            position_list_parse_test.extend(list(df_merged_parse_test['abs_pos'] + list(df_merged_parse_test['ALT']))) #make position unique on ALT call for parsimony selection
+            ####
+
         #find parsimonies uninformative positions
-        counter = Counter(position_list)
+        counter = Counter(position_list_parse_test)
         most_common = counter.most_common()
         most_common = dict(most_common)
         parsimony_positions=[]

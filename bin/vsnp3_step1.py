@@ -69,8 +69,24 @@ class vSNP3_Step1(Setup):
             else:
                 print(f'#### {self.sample_name} PROVIDE A REFERENCE, REFERENCE NOT FOUND')
                 self.excel_stats.excel_dict["Reference"] = f'PROVIDE A REFERENCE, REFERENCE NOT FOUND'
-                self.excel_stats.excel_dict["Sample Quality"] = f'Questionable'
+                print(f'Getting Stats before exiting')
+                fastq_stats = FASTQ_Stats(FASTQ_R1=self.FASTQ_R1, FASTQ_R2=self.FASTQ_R2, debug=self.debug)
+                fastq_stats.run()
+                fastq_stats.latex(self.latex_report.tex)
+                fastq_stats.excel(self.excel_stats.excel_dict)
+                self.latex_report.latex_ending()
                 self.excel_stats.post_excel()
+                temp_dir = './temp'
+                if not os.path.exists(temp_dir):
+                    os.makedirs(temp_dir)
+                files_grab = []
+                for files in ('*.aux', '*.log', '*tex', '*png', '*out', "*_seqkit_stats.txt"):
+                    files_grab.extend(glob.glob(files))
+                for each in files_grab:
+                    shutil.move(each, temp_dir)
+
+                if args.debug is False:
+                    shutil.rmtree(temp_dir)
                 sys.exit()
             concatenated_FASTA = self.concat_fasta(reference_options.fasta)
             self.gbk = reference_options.gbk

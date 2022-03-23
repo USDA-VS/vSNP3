@@ -28,7 +28,7 @@ class Tree:
         # Find an optimal compiled version of RAxML in conda
         try:
             subprocess.call("raxml", stdout=open(os.devnull, 'wb'))
-            sys_raxml = "raxml"
+            raxml = "raxml"
         except OSError:
             try:
                 subprocess.call("raxmlHPC-PTHREADS-AVX2", stdout=subprocess.DEVNULL)
