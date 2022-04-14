@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.0"
+__version__ = "3.06"
 
 import os
 import sys
@@ -287,6 +287,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
         for each in vsnp.alignment_vcf_run_summary:
             print(each, file=run_log)
         print('\nVersions:', file=run_log)
+        print(f'vSNP3: {__version__}', file=run_log)
         for each in python_programs:
             print(each, file=run_log)
         for each in vsnp.programs:

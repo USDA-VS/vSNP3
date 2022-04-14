@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.0"
+__version__ = "3.06"
 
 import os
 import subprocess
@@ -57,7 +57,8 @@ class Alignment(Setup):
         unmapped_read = f'{sample_name}_unmapped.fastq'
         self.aligner = "Minimap2"
         alignment_vcf_run_summary = []
-        fastq_hash = []
+        os.system(f'samtools faidx {reference}')
+        os.system(f'bwa index {reference} 2> /dev/null')
         if self.nanopore: 
             run_set = f'minimap2 -a -x map-ont -R "@RG\\tID:{sample_name}\\tSM:{sample_name}\\tPL:ILLUMINA\\tPI:250" -t 8 {reference} {self.FASTQ_R1} -o {samfile}'
             os.system(run_set)

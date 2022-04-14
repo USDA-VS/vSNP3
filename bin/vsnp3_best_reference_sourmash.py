@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.0"
+__version__ = "3.06"
 
 import os
 import subprocess

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.0"
+__version__ = "3.06"
 
 import os
 import sys
@@ -207,6 +207,7 @@ class HTML_Summary():
 
         try:
             print("\n<h2>Program versions:</h2>", file=htmlfile)
+            print(f'vSNP3: {__version__}', file=htmlfile)
             print(f'Python: {sys.version} <br>', file=htmlfile)
             program_list = ['Python', 'Bio', 'allel', 'numpy', 'pandas', 'scipy',]
             for name, module in sorted(sys.modules.items()): 
