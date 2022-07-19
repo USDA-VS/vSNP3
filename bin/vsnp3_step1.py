@@ -26,12 +26,13 @@ from vsnp3_group_reporter import GroupReporter
 class vSNP3_Step1(Setup):
     ''' 
     '''
-    def __init__(self, FASTA=None, FASTQ_R1=None, FASTQ_R2=None, gbk=None, reference_type=None, nanopore=False, assemble_unmap=None, debug=False):
+    def __init__(self, FASTA=None, FASTQ_R1=None, FASTQ_R2=None, gbk=None, reference_type=None, nanopore=False, assemble_unmap=None, spoligo=None, debug=False):
         '''
         Start at class call
         '''
         Setup.__init__(self, FASTQ_R1=FASTQ_R1)
         self.assemble_unmap = assemble_unmap
+        self.spoligo = spoligo
         self.latex_report = Latex_Report(self.sample_name)
         self.excel_stats = Excel_Stats(self.sample_name)
         self.nanopore = nanopore
@@ -39,26 +40,14 @@ class vSNP3_Step1(Setup):
             concatenated_FASTA = self.concat_fasta(FASTA) # -f option for FASTA will take wildcard for multiple FASTAs
             Setup.__init__(self, FASTA=concatenated_FASTA, FASTQ_R1=FASTQ_R1, FASTQ_R2=FASTQ_R2, gbk=gbk, debug=debug)
             self.reference_type = None
-            self.best_reference = Best_Reference(FASTQ_R1=FASTQ_R1) #still get best reference to see if isolate is TB, if true then run spoligo
-            self.best_reference.run()
-            self.best_reference.latex(self.latex_report.tex)
-            self.best_reference.excel(self.excel_stats.excel_dict)
-            with open(self.FASTA) as f:
-                top_fasta_header = f.readline()
-                self.top_header_description = top_fasta_header
+            self.top_header_description = "NA"
         elif reference_type: #IF -n OPTION USE IT, ie directory name
             reference_options = Ref_Options(reference_type)
             concatenated_FASTA = self.concat_fasta(reference_options.fasta)
             self.excel_stats.excel_dict["Reference"] = f'{reference_type} Forced'
-            # group_reporter = GroupReporter(self.zero_coverage, reference_type)
-            # self.excel_stats.excel_dict["Groups"] = ", ".join(group_reporter.get_groups())
             Setup.__init__(self, FASTA=concatenated_FASTA, FASTQ_R1=FASTQ_R1, FASTQ_R2=FASTQ_R2, gbk=reference_options.gbk, debug=debug)
             self.reference_type = reference_type
-            self.best_reference = Best_Reference(FASTQ_R1=FASTQ_R1) #still get best reference to see if isolate is TB, if true then run spoligo
-            self.best_reference.run()
-            self.top_header_description = self.best_reference.top_fasta_header
-            self.best_reference.latex(self.latex_report.tex)
-            self.best_reference.excel(self.excel_stats.excel_dict)
+            self.top_header_description = "NA"
         else: #IF NO REFERENCE PROVIDED SEEK A "BEST REFERENCE", for tb, brucella, paraTB or SARS-CoV-2
             Setup.__init__(self, FASTQ_R1=FASTQ_R1, FASTQ_R2=FASTQ_R2,)
             self.best_reference = Best_Reference(FASTQ_R1=FASTQ_R1)
@@ -91,8 +80,6 @@ class vSNP3_Step1(Setup):
             concatenated_FASTA = self.concat_fasta(reference_options.fasta)
             self.gbk = reference_options.gbk
             self.excel_stats.excel_dict["Reference"] = f'{reference_options.select_ref} by Best Reference'
-            # group_reporter = GroupReporter(self.zero_coverage, args.ref_option)
-            # self.excel_stats.excel_dict["Groups"] = ", ".join(group_reporter.get_groups())
             Setup.__init__(self, FASTA=concatenated_FASTA, FASTQ_R1=FASTQ_R1, FASTQ_R2=FASTQ_R2, gbk=reference_options.gbk, debug=debug)
             self.best_reference.latex(self.latex_report.tex)
             self.best_reference.excel(self.excel_stats.excel_dict)
@@ -134,13 +121,13 @@ class vSNP3_Step1(Setup):
         except AttributeError:
             pass
         self.MYCO = MYCO
-        if MYCO:
+        if MYCO and self.spoligo:
             spoligo = Spoligo(self.FASTQ_R1, self.FASTQ_R2, self.debug)
             spoligo.spoligo()
             spoligo.latex(self.latex_report.tex)
             spoligo.excel(self.excel_stats.excel_dict)
 
-        if int(float(fastq_stats.R1.max_len.replace(',', ''))) > 601:
+        if int(float(fastq_stats.R1.max_len.replace(',', ''))) > 701:
             nanopore = True
         elif self.nanopore:
             nanopore = True
@@ -263,6 +250,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     parser.add_argument('-t', '--reference_type', action='store', dest='reference_type', required=False, default=None, help="Optional: Provide directory name with FASTA and GBK file/s")
     parser.add_argument('-n', '--nanopore', action='store_true', dest='nanopore', default=False, help='if true run alignment optimized for nanopore reads')
     parser.add_argument('-assemble_unmap', '--assemble_unmap', action='store_true', dest='assemble_unmap', help='Optional: skip assembly of unmapped reads')
+    parser.add_argument('-spoligo', '--spoligo', action='store_true', dest='spoligo', help='Optional: get spoligotype if TB complex')
     parser.add_argument('-d', '--debug', action='store_true', dest='debug', help='keep spades output directory')
     parser.add_argument('-v', '--version', action='version', version=f'{os.path.basename(__file__)}: version {__version__}')
     args = parser.parse_args()
@@ -277,7 +265,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
         if hasattr(module, '__version__') and name in program_list: 
             python_programs.append(f'{name}, {module.__version__}')
 
-    vsnp = vSNP3_Step1(FASTQ_R1=args.FASTQ_R1, FASTQ_R2=args.FASTQ_R2, FASTA=args.FASTA, gbk=args.gbk, reference_type=args.reference_type, nanopore=args.nanopore, assemble_unmap=args.assemble_unmap, debug=args.debug)
+    vsnp = vSNP3_Step1(FASTQ_R1=args.FASTQ_R1, FASTQ_R2=args.FASTQ_R2, FASTA=args.FASTA, gbk=args.gbk, reference_type=args.reference_type, nanopore=args.nanopore, assemble_unmap=args.assemble_unmap, spoligo=args.spoligo, debug=args.debug)
     vsnp.run()
 
     with open('run_log.txt', 'w') as run_log:

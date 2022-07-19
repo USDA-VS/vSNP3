@@ -129,6 +129,7 @@ class Spoligo(Setup):
         sequence_list = []
         try:
             for fastq in self.FASTQ_list:
+                sum_length = 0
                 with gzip.open(fastq, "rt") as in_handle:
                     # all 3, title and seq and qual, were needed
                     count=0
@@ -136,17 +137,23 @@ class Spoligo(Setup):
                         if count < 1000000: #million read max
                             count+=1
                             sequence_list.append(seq)
+                            sum_length = sum_length + len(seq)
+                    ave_length = sum_length/count
+                    ave_length = int(ave_length)
+                    print(f'Spoligo calculated average read length: {ave_length}')
         except TypeError:
             # TypeError if not paired
             pass
 
-        if len(seq) > 70:
+        if ave_length > 64:
+            print("Spoligo check: Average read length >=65, Reads parsed on repeat regions before counting spacers")
             #Three 10bp sequences dispersed across repeat region, forward and reverse
             capture_spacer_sequence = re.compile(".*TTTCCGTCCC.*|.*GGGACGGAAA.*|.*TCTCGGGGTT.*|.*AACCCCGAGA.*|.*TGGGTCTGAC.*|.*GTCAGACCCA.*")
             sequence_list = list(filter(capture_spacer_sequence.match, sequence_list))
             seq_string = "".join(sequence_list)
         else:
             #if <= 70 then search all reads, not just those with repeat regions.
+            print("Spoligo check: Average read length < 65.  Looking at all reads for spacers.  Will be very slow. Queue Jepordy theme song.")
             seq_string = "".join(sequence_list)
         self.seq_string = seq_string
         for spacer_id, spacer_sequence in self.spoligo_dictionary.items():
