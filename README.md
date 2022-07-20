@@ -13,7 +13,7 @@ User is expected to be familiar with the command-line and able to install [conda
 Anaconda with Python 3.7 or greater, 3.9 recommended.
 
 ```
-conda install vsnp3=3.06 -c bioconda
+conda install vsnp3=3.07 -c bioconda
 ```
 
 See [link](https://docs.conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html) for managing environment.
