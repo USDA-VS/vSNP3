@@ -29,10 +29,7 @@ vsnp3_step2.py -h
 
 Download test files
 ```
-cd ~
-```
-```
-git clone https://github.com/USDA-VS/vsnp3_test_dataset.git
+cd ~; git clone https://github.com/USDA-VS/vsnp3_test_dataset.git
 ```
 
 Add reference:
