@@ -28,14 +28,16 @@ vsnp3_step2.py -h
 Download test files
 ```
 cd ~
-
+```
+```
 git clone https://github.com/USDA-VS/vsnp3_test_dataset.git
 ```
 
 Add reference:
 ```
 cd ~/vsnp3_test_dataset/vsnp_dependencies
-
+```
+```
 vsnp3_path_adder.py -d `pwd`
 ```
 
@@ -44,14 +46,16 @@ vsnp3_path_adder.py -d `pwd`
 Test step 1:
 ```
 cd ~/vsnp3_test_dataset/AF2122_test_files/step1
-
+```
+```
 vsnp3_step1.py -r1 *_R1*.fastq.gz -r2 *_R2*.fastq.gz -t Mycobacterium_AF2122
 ```
 
 Test step 2:
 ```
 cd ~/vsnp3_test_dataset/AF2122_test_files/step2
-
+```
+```
 vsnp3_step2.py -wd . -a -t Mycobacterium_AF2122
 ```
 
@@ -60,18 +64,22 @@ vsnp3_step2.py -wd . -a -t Mycobacterium_AF2122
 Test step 1:
 ```
 cd ~/vsnp3_test_dataset/NC_045512_test_files/step1
-
+```
+```
 for i in *.fastq.gz; do n=`echo $i | sed 's/[_.].*//'`; echo "$i in directory $n"; mkdir -p $n; mv $i $n/; done
-
+```
+```
 cdir=`pwd`; for f in *; do echo $f; cd ./$f; vsnp3_step1.py -r1 *_R1*.fastq.gz -r2 *_R2*.fastq.gz -t NC_045512_wuhan-hu-1; cd $cdir; done
-
+```
+```
 mkdir stats; cp **/*stats.xlsx stats; cd stats; vsnp3_excel_merge_files.py #see combined_excelworksheets-*.xlsx stat summary
 ```
 
 Test step 2:
 ```
 cd ~/vsnp3_test_dataset/NC_045512_test_files/step2
-
+```
+```
 vsnp3_step2.py -a -t NC_045512_wuhan-hu-1 -remove
 ```
 
