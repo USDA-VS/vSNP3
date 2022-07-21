@@ -17,9 +17,11 @@ conda install vsnp3=3.07 -c conda-forge -c bioconda
 ## Installation test
 ```
 which vsnp3_step1.py
-
+```
+```
 vsnp3_step1.py -h
-
+```
+```
 vsnp3_step2.py -h
 ```
 
