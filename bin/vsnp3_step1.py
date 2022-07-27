@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.07"
+__version__ = "3.08"
 
 import os
 import sys
@@ -40,14 +40,16 @@ class vSNP3_Step1(Setup):
             concatenated_FASTA = self.concat_fasta(FASTA) # -f option for FASTA will take wildcard for multiple FASTAs
             Setup.__init__(self, FASTA=concatenated_FASTA, FASTQ_R1=FASTQ_R1, FASTQ_R2=FASTQ_R2, gbk=gbk, debug=debug)
             self.reference_type = None
-            self.top_header_description = "NA"
+            with open(self.FASTA) as f:
+                self.top_header_description = f.readline()
         elif reference_type: #IF -n OPTION USE IT, ie directory name
             reference_options = Ref_Options(reference_type)
             concatenated_FASTA = self.concat_fasta(reference_options.fasta)
             self.excel_stats.excel_dict["Reference"] = f'{reference_type} Forced'
             Setup.__init__(self, FASTA=concatenated_FASTA, FASTQ_R1=FASTQ_R1, FASTQ_R2=FASTQ_R2, gbk=reference_options.gbk, debug=debug)
             self.reference_type = reference_type
-            self.top_header_description = "NA"
+            with open(self.FASTA) as f:
+                self.top_header_description = f.readline()
         else: #IF NO REFERENCE PROVIDED SEEK A "BEST REFERENCE", for tb, brucella, paraTB or SARS-CoV-2
             Setup.__init__(self, FASTQ_R1=FASTQ_R1, FASTQ_R2=FASTQ_R2,)
             self.best_reference = Best_Reference(FASTQ_R1=FASTQ_R1)
@@ -249,8 +251,8 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     parser.add_argument('-b', '--gbk', nargs='*', dest='gbk', required=False, default=None, help='Optional: gbk to annotate VCF file.  Multiple can be specified with wildcard')
     parser.add_argument('-t', '--reference_type', action='store', dest='reference_type', required=False, default=None, help="Optional: Provide directory name with FASTA and GBK file/s")
     parser.add_argument('-n', '--nanopore', action='store_true', dest='nanopore', default=False, help='if true run alignment optimized for nanopore reads')
-    parser.add_argument('-assemble_unmap', '--assemble_unmap', action='store_true', dest='assemble_unmap', help='Optional: skip assembly of unmapped reads')
-    parser.add_argument('-spoligo', '--spoligo', action='store_true', dest='spoligo', help='Optional: get spoligotype if TB complex')
+    parser.add_argument('-assemble_unmap', '--assemble_unmap', action='store_true', dest='assemble_unmap', help='Optional: skip assembly of unmapped reads.   See also vsnp3_assembly.py')
+    parser.add_argument('-spoligo', '--spoligo', action='store_true', dest='spoligo', help='Optional: get spoligotype if TB complex.  See also vsnp3_spoligotype.py')
     parser.add_argument('-d', '--debug', action='store_true', dest='debug', help='keep spades output directory')
     parser.add_argument('-v', '--version', action='version', version=f'{os.path.basename(__file__)}: version {__version__}')
     args = parser.parse_args()
