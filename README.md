@@ -11,7 +11,7 @@ Whole genome sequencing for disease tracing and outbreak investigations is routi
 Tested with Python 3.7 - 3.9.
 
 ```
-conda install vsnp3=3.08 -c conda-forge -c bioconda
+conda install vsnp3=3.07 -c conda-forge -c bioconda
 ```
 
 ## Installation test
