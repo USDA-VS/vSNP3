@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.08"
+__version__ = "3.09"
 
 import os
 import sys
@@ -155,7 +155,7 @@ class HTML_Summary():
         else:
             print(f"No gbk for annotation<br>", file=htmlfile)
 
-        print(f"SNP calling thresholds:  REF: QUAL <u><{args.n_threshold}</u>, N: QUAL <u>{args.n_threshold}-{args.qual_threshold}</u>, ALT: QUAL <u>>{args.qual_threshold}</u>, Ambigious: <u>AC=1</u></h4>", file=htmlfile)
+        print(f"SNP calling thresholds:  REF: QUAL <u><{args.n_threshold}</u>, N: QUAL <u>{args.n_threshold}-{args.qual_threshold}</u>, ALT: QUAL <u>>{args.qual_threshold}</u>, Ambigious: <u>AC=1</u>, MQ: <u>>{args.mq_threshold}</u></h4>", file=htmlfile)
 
         print(f"<h4>{vcf_to_df.vcf_original_count} VCF files initial count<br>", file=htmlfile)
         print(f"{len(vcf_to_df.dataframes)} VCF files in this run<br>", file=htmlfile)
@@ -280,7 +280,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     parser.add_argument('-f', '--fix_vcfs', action='store_true', dest='fix_vcfs', help='Optional: Just fix VCF files and exit')
     parser.add_argument('-remove', '--remove', action='store_true', dest='remove', help='Optional: Remove VCF files from current working directory when VCF files in current working director are used, that is when --wd is not used VCF files are removed with option.  VCF files are still zipped in "vcf_starting_files.zip".')
     parser.add_argument('-a', '--all_vcf', action='store_true', dest='all_vcf', required=False, help='Optional: create table with all isolates')
-    parser.add_argument('-i', '--find_new_filters', action='store_true', dest='find_new_filters', help='Optional: find new positions to apply to the filter file.  Positions must be manually added to filter file.  They are not added by running this command.  Only text files are output showing position detail')
+    parser.add_argument('-i', '--find_new_filters', action='store_true', dest='find_new_filters', help='Optional: find new positions to apply to the filter file.  Positions must be manually added to filter file.  They are not added by running this command.  Only text files are output showing position detail. Curant before adding filters')
     parser.add_argument('-abs_pos', '--abs_pos', action='store', dest='abs_pos', required=False, help='Optional: Make a group on defining SNP.  Must be supplied with --group option.  Format as chrom in VCF, chrom:10000.')
     parser.add_argument('-group', '--group', action='store', dest='group', required=False, help='Optional: Name a group on defining SNP.  Must be supplied with --abs_pos option')
     parser.add_argument('-d', '--debug', action='store_true', dest='debug', help='Optional: Keep debugging files and run without pooling.  A pickle file will be kept for troubleshooting to be used directly in vsnp3_group_on_defining_snps.py.  This saves processing time')
