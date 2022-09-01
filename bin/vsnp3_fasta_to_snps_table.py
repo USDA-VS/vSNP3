@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.08"
+__version__ = "3.09"
 
 import os
 import subprocess
@@ -189,9 +189,11 @@ class Tables:
         sample_order = line.split('\n')
         sample_order = list(filter(None, sample_order))
         sample_order.insert(0, 'root')
-        tree_order = fasta_df.loc[sample_order]
+        tree_order = fasta_df.loc[sample_order] #cascading1 table
+        tree_order2 = fasta_df.loc[sample_order] #cascading2 table
         self.write_out_table(tree_order, 'sorted') #table_type, sorted or cascade, type is labeled on the output Excel file
-        #add self.mq
+        
+        ## Sort bias to total number of SNPs per column
         # count number of SNPs in each column
         snp_per_column = []
         for column_header in tree_order:
@@ -202,9 +204,7 @@ class Tables:
                 if element != column[0] and element != '-': #column[0] is top row/root/reference, element is everything below it.
                     count = count + 1
             snp_per_column.append(count)
-            #print("the count is: %s" % count)
         row1 = pd.Series(snp_per_column, tree_order.columns, name="snp_per_column")
-        #row1 = row1.drop('reference_seq')
 
         # get the snp count per column
         # for each column in the table
@@ -212,6 +212,38 @@ class Tables:
         for column_header in tree_order:
             count = 0
             column = tree_order[column_header]
+            # for each element in the column
+            # skip the first element
+            for element in column[1:]:
+                if element == column[0] or element == '-': # when - keep count, essentially skip -
+                    count = count + 1
+                else:
+                    break
+            snp_from_top.append(count)
+        row2 = pd.Series(snp_from_top, tree_order.columns, name="snp_from_top")
+        tree_order = tree_order.append([row1])
+        tree_order = tree_order.append([row2])
+        tree_order = tree_order.T
+        tree_order = tree_order.sort_values(['snp_from_top', 'snp_per_column'], ascending=[True, False])
+        tree_order = tree_order.T
+
+        # remove snp_per_column and snp_from_top rows
+        cascade_order_df = tree_order[:-2]
+        self.write_out_table(cascade_order_df, 'cascade1') #table_type, sorted or cascade, type is labeled on the output Excel file
+        del column
+        del row1
+        del row2
+        del snp_from_top
+        del cascade_order_df
+
+        ## Start 2nd cascading table: sort bias to longest continues vertical SNP count per column
+        row1 = pd.Series(snp_per_column, tree_order2.columns, name="snp_per_column")
+        # get the snp count per column
+        # for each column in the table
+        snp_from_top = []
+        for column_header in tree_order2:
+            count = 0
+            column = tree_order2[column_header]
             index_list_of_ref_differences=[]
             for ind, list_item in enumerate(column[1:].to_list()):
                 if list_item != column[0] and list_item != '-':
@@ -219,17 +251,16 @@ class Tables:
             c = itertools.count()
             val = max((list(g) for _, g in itertools.groupby(index_list_of_ref_differences, lambda x: x-next(c))), key=len)
             snp_from_top.append(val[0]) #starting row number with longest continous SNPs in column
-        row2 = pd.Series(snp_from_top, tree_order.columns, name="snp_from_top")
-        tree_order = tree_order.append([row1])
-        tree_order = tree_order.append([row2])
-        tree_order = tree_order.T
-        tree_order = tree_order.sort_values(['snp_from_top', 'snp_per_column'], ascending=[True, False])
-        # tree_order = tree_order.sort_values(['snp_per_column', 'snp_from_top'], ascending=[False, True])
-        tree_order = tree_order.T
+        row2 = pd.Series(snp_from_top, tree_order2.columns, name="snp_from_top")
+        tree_order2 = tree_order2.append([row1])
+        tree_order2 = tree_order2.append([row2])
+        tree_order2 = tree_order2.T
+        tree_order2 = tree_order2.sort_values(['snp_from_top', 'snp_per_column'], ascending=[True, False])
+        tree_order2 = tree_order2.T
 
         # remove snp_per_column and snp_from_top rows
-        cascade_order_df = tree_order[:-2]
-        self.write_out_table(cascade_order_df, 'cascade') #table_type, sorted or cascade, type is labeled on the output Excel file
+        cascade_order_df = tree_order2[:-2]
+        self.write_out_table(cascade_order_df, 'cascade2') #table_type, sorted or cascade, type is labeled on the output Excel file
 
     ###Break and write out table
     def write_out_table(self, df, table_type=None):

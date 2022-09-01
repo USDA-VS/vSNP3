@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.08"
+__version__ = "3.09"
 
 import os
 import sys
@@ -41,6 +41,7 @@ class GroupReporter:
     def find_initial_positions(self, filename):
         found_positions = {}
         found_positions_mix = {}
+        # Values must be hardcoded.  This is used in step1 where options are not used.  Defining SNPs should be of relatively high quality.
         AC = 2
         qual_threshold = 150
         MQ = 56

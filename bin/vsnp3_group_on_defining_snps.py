@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.08"
+__version__ = "3.09"
 
 import os
 import sys
@@ -41,7 +41,7 @@ class bcolors:
 class Group():
     ''' 
     '''
-    def __init__(self, cwd=None, metadata=None, excel_remove=None, gbk_list=None, defining_snps=None, dataframes=None, pickle_file=None, abs_pos=None, group=None, all_vcf=None, find_new_filters=None, no_filters=True, qual_threshold=150, n_threshold=50, mq_threshold=56, debug=False):
+    def __init__(self, cwd=None, metadata=None, excel_remove=None, gbk_list=None, defining_snps=None, dataframes=None, pickle_file=None, abs_pos=None, group=None, all_vcf=None, find_new_filters=None, no_filters=True, qual_threshold=150, n_threshold=50, mq_threshold=20, debug=False):
 
         self.qual_threshold = qual_threshold
         self.n_threshold = n_threshold
@@ -182,7 +182,7 @@ class Group():
                 map_quality_dict[abs_pos].append(MQ)
 
             if single_df.empty:
-                self.vcf_bad_list.append(f'{sample}')
+                self.vcf_bad_list.append(f'{sample}  Dataframe Empty at vsnp3_group_on_defining_snps.py ~ line 175.  Thresholds (QUAL, MQ, etc) may not be being met and causing no positions to be selected.')
             else:
                 dataframe_essentials[sample] = single_df
             sample_dict = dict(zip(single_df.abs_pos, single_df.ALT))
@@ -301,15 +301,16 @@ class Group():
                             print('New positions to filter found after current filter positions applied but before noninformative SNP are removed', file=postion_detail_list)
                         else:
                             print('No previous filtering applied', file=postion_detail_list)
-                        print('dd.QUAL.mean() < 700 and dd.QUAL.max() < 1300 or dd.MQ.mean() < 56', file=postion_list)
-                        print('dd.QUAL.mean() < 700 and dd.QUAL.max() < 1300 or dd.MQ.mean() < 56', file=postion_detail_list)
+                        # Hardcoded values.  Looking to get a list of positions likely poor.  Curating findings before adding positions to filter shold be done post this step
+                        print('dd.QUAL.mean() < 700 and dd.QUAL.max() < 1300 or dd.MQ.mean() < 40', file=postion_list)
+                        print('dd.QUAL.mean() < 700 and dd.QUAL.max() < 1300 or dd.MQ.mean() < 40', file=postion_detail_list)
                         cc = pd.concat(group_dict_of_df[1].values(), ignore_index=True)
                         cc['abs_pos'] = cc['CHROM'] + ':' + cc['POS'].astype(str)
                         ll = set(cc['abs_pos'].to_list())
                         for vv in ll:
                             dd = cc[cc['abs_pos'] == vv]
                             if len(dd) > 3:
-                                if dd.QUAL.mean() < 700 and dd.QUAL.max() < 1300 or dd.MQ.mean() < 56:
+                                if dd.QUAL.mean() < 700 and dd.QUAL.max() < 1300 or dd.MQ.mean() < 40:
                                     print(vv, file=postion_list)
                                     print(f'{vv} Average QUAL: {dd.QUAL.mean():0.2f}, Max QUAL: {dd.QUAL.max():0.2f}, Average MQ: {dd.MQ.mean():0.2f}', file=postion_detail_list)
                         postion_list.close()
@@ -535,6 +536,9 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     parser.add_argument('-s', '--defining_snps', action='store', dest='defining_snps', required=False, help='Defining SNPs with positions to filter.  See template_define_filter.xlsx')
     parser.add_argument('-abs_pos', '--abs_pos', action='store', dest='abs_pos', required=False, help='Must be supplied with --group option.  Format as chrom in VCF, likely chrom:10000... NC_002945.4:2138896.  Run: `vsnp3_step2.py --wd ../original -da` to obtain pickle for entire set, isolate pickle file and run `vsnp3_group_on_defining_snps.py -p dictionary_of_dataframes.pickle -a NC_002945.4:1295549`')
     parser.add_argument('-group', '--group', action='store', dest='group', required=False, help='Must be supplied with --abs_pos option')
+    parser.add_argument('-w', '--qual_threshold', action='store', dest='qual_threshold', default=150, required=False, help='Optional: Minimum QUAL threshold for calling a SNP')
+    parser.add_argument('-x', '--n_threshold', action='store', dest='n_threshold', default=50, required=False, help='Optional: Minimum N threshold.  SNPs between this and qual_threshold are reported as N')
+    parser.add_argument('-y', '--mq_threshold', action='store', dest='mq_threshold', default=20, required=False, help='Optional: At least one position per group must have this minimum MQ threshold to be called.')
     parser.add_argument('-t', '--reference_type', action='store', dest='reference_type', required=False, help='Reference type group/directory with dependencies')
     parser.add_argument('-d', '--debug', action='store_true', dest='debug', help='Optional: Keep debugging files and run without pooling')
     parser.add_argument('-v', '--version', action='version', version=f'{os.path.basename(__file__)}: version {__version__}')
@@ -549,6 +553,6 @@ if __name__ == "__main__": # execute if directly access by the interpreter
         if ro.gbk and not args.gbk:
             args.gbk = ro.gbk
 
-    group = Group(pickle_file=args.pickle_file, metadata=args.metadata, gbk_list=args.gbk, defining_snps=args.defining_snps, abs_pos=args.abs_pos, group=args.group, debug=args.debug)
+    group = Group(pickle_file=args.pickle_file, metadata=args.metadata, gbk_list=args.gbk, defining_snps=args.defining_snps, abs_pos=args.abs_pos, group=args.group, qual_threshold=int(args.qual_threshold), n_threshold=int(args.n_threshold), mq_threshold=int(args.mq_threshold), debug=args.debug)
 
 # Created 2021 by Tod Stuber

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.08"
+__version__ = "3.09"
 
 import os
 import subprocess
@@ -55,18 +55,23 @@ class Alignment(Setup):
         unmapped_read1 = f'{sample_name}_unmapped_R1.fastq'
         unmapped_read2 = f'{sample_name}_unmapped_R2.fastq'
         unmapped_read = f'{sample_name}_unmapped.fastq'
-        self.aligner = "Minimap2"
         alignment_vcf_run_summary = []
         os.system(f'samtools faidx {reference}')
-        os.system(f'bwa index {reference} 2> /dev/null')
+        # os.system(f'picard CreateSequenceDictionary REFERENCE={reference} OUTPUT={reference.rsplit(".", 1)[0]}.dict 2> /dev/null')
+        os.system(f'bwa index {reference} 2> /dev/null') # Needed for freebayes-parallel.
         if self.nanopore: 
+            self.aligner = "Minimap2"
             run_set = f'minimap2 -a -x map-ont -R "@RG\\tID:{sample_name}\\tSM:{sample_name}\\tPL:ILLUMINA\\tPI:250" -t 8 {reference} {self.FASTQ_R1} -o {samfile}'
             os.system(run_set)
         elif self.paired:
-            run_set = f'minimap2 -t 8 -a -x sr {reference} {self.FASTQ_R1} {self.FASTQ_R2} -o {samfile}'
+            self.aligner = "BWA"
+            # run_set = f'minimap2 -t 8 -a -x sr {reference} {self.FASTQ_R1} {self.FASTQ_R2} -o {samfile}'
+            run_set = f'bwa mem -M -R "@RG\\tID:{sample_name}\\tSM:{sample_name}\\tPL:ILLUMINA\\tPI:250" -t 8 {reference} {self.FASTQ_R1} {self.FASTQ_R2} > {samfile}'
             os.system(run_set)
         else:
-            run_set = f'minimap2 -t 8 -a -x sr {reference} {self.FASTQ_R1} -o {samfile}'
+            self.aligner = "BWA"
+            # run_set = f'minimap2 -t 8 -a -x sr {reference} {self.FASTQ_R1} -o {samfile}'
+            run_set = f'bwa mem -M -R "@RG\\tID:{sample_name}\\tSM:{sample_name}\\tPL:ILLUMINA\\tPI:250" -t 8 {reference} {self.FASTQ_R1} > {samfile}'
             os.system(run_set)
         alignment_vcf_run_summary.append(f'SYSTEM CALL: {run_set} -- {datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}')
 
@@ -80,6 +85,15 @@ class Alignment(Setup):
         alignment_vcf_run_summary.append(f'SYSTEM CALL: {samfixmate} -- {datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}')
         alignment_vcf_run_summary.append(f'SYSTEM CALL: {samsort} -- {datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}')
         alignment_vcf_run_summary.append(f'SYSTEM CALL: {sammarkup} -- {datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}')
+
+        # os.remove(fixmate_bamfile)
+        # os.remove(pos_srt_bamfile)
+        # os.remove(nodup_bamfile)
+        # os.system(f'samtools view -Sb {samfile} -o {fixmate_bamfile}')
+        # os.system(f'samtools sort {fixmate_bamfile} -o {pos_srt_bamfile}')
+        # os.system(f'samtools index {pos_srt_bamfile}')
+        # os.system(f'picard MarkDuplicates INPUT={pos_srt_bamfile} OUTPUT={nodup_bamfile} ASSUME_SORTED=true REMOVE_DUPLICATES=true METRICS_FILE=dup_metrics.csv 2> /dev/null')
+        # os.system(f'samtools index {nodup_bamfile}')
 
         # http://www.htslib.org/doc/samtools-markdup.html
         alignment_vcf_run_summary.append(f'NOTE: Read stats gathered by markduplicate_stats.txt -- {datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}')
@@ -375,7 +389,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     parser.add_argument('-r1', '--read1', action='store', dest='FASTQ_R1', required=True, help='Required: single read, R1 when Illumina read')
     parser.add_argument('-r2', '--read2', action='store', dest='FASTQ_R2', required=False, default=None, help='Optional: R2 Illumina read')
     parser.add_argument('-r', '--reference', nargs='*', dest='FASTA', required=False, help='FASTA file to be used as reference.  Multiple can be specified with wildcard')
-    parser.add_argument('-n', '--nanopore', action='store_true', dest='nanopore', default=False, help='if true run alignment with minimap2 instead of bwa')
+    parser.add_argument('-n', '--nanopore', action='store_true', dest='nanopore', default=False, help='Beta, if true run alignment with minimap2 map-ont option')
     parser.add_argument('-b', '--gbk', nargs='*', dest='gbk', required=False, default=None, help='Optional: gbk to annotate VCF file.  Multiple can be specified with wildcard')
     parser.add_argument('-assemble_unmap', '--assemble_unmap', action='store_true', dest='assemble_unmap', help='skip assembly of unmapped reads')
     parser.add_argument('-d', '--debug', action='store_true', dest='debug', default=False, help='keep temp file')

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.08"
+__version__ = "3.09"
 
 import os
 import sys
@@ -287,7 +287,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     if not os.path.exists(temp_dir):
         os.makedirs(temp_dir)
     files_grab = []
-    for files in ('*.aux', '*.log', '*tex', '*png', '*out', "*_seqkit_stats.txt"):
+    for files in ('*.aux', '*.log', '*tex', '*png', "*_seqkit_stats.txt"):
         files_grab.extend(glob.glob(files))
     for each in files_grab:
         shutil.move(each, temp_dir)
