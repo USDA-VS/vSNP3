@@ -10,6 +10,8 @@ Whole genome sequencing for disease tracing and outbreak investigations is routi
 
 Tested with Python 3.7 - 3.9.
 
+Anaconda [setup](./docs/instructions/conda_instructions.md)
+
 ```
 conda install vsnp3=3.09 -c conda-forge -c bioconda
 ```
@@ -143,7 +145,6 @@ See `-h` option for detail and usage
 - With only a FASTA alignment a cascading SNP table can be generated.
 - Version and option capturing enhancements.
 - Enhanced file input options.
-- Minimap2 replacing BWA.
 - Oxford Nanopore read compatible (beta).
 - all_vcf named as defining SNP column label.
 - Removed Picard which drops Java requirements thus providing easier conda installation.
@@ -153,3 +154,5 @@ See `-h` option for detail and usage
 - Detailed steps recorded in run_log.txt.
 - Spoligotype for TB complex isolates not found by default.  -s option required with step 1 or find using vsnp3_spoligotype.py.
 - Brucella MLST removed from step 1.  Find Brucella MLST using vsnp3_bruc_mlst.py.
+
+[Additional Tools](./docs/instructions/additional_tools.md)

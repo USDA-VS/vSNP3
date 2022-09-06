@@ -276,8 +276,8 @@ class Tables:
             df_temp = df_temp.merge(self.gbk)
             df_temp = df_temp.set_index('abs_pos')
             df = df_temp.T
-        # else:
-        #     df = df.append(pd.Series(name='no annotations'))
+        else:
+            df = df.append(pd.Series(name='no annotations'))
         max_size=10000 #max columns allowed in tables
         count=0
         chunk_start=0
@@ -359,69 +359,6 @@ class Tables:
         #set last row
         ws.set_row(rows, 400, formatannotation)
         writer.save()
-	
-    def annotate_table(self, table_df, sample_path_name, group, gbk_in):
-        gbk_dict = SeqIO.to_dict(SeqIO.parse(gbk_in, "genbank"))
-        annotation_dict = {}
-        for chromosome in list(gbk_dict.keys()):
-            write_out = open(f'{sample_path_name}/{group}/{group}_temp.csv', 'w+')
-            for feature in gbk_dict[chromosome].features:
-                if "CDS" in feature.type or "rRNA" in feature.type:
-                    myproduct = None
-                    mylocus = None
-                    mygene = None
-                    try:
-                        myproduct = feature.qualifiers['product'][0]
-                    except KeyError:
-                        pass
-                    try:
-                        mylocus = feature.qualifiers['locus_tag'][0]
-                    except KeyError:
-                        pass
-                    try:
-                        mygene = feature.qualifiers['gene'][0]
-                    except KeyError:
-                        pass
-                    print(chromosome, int(feature.location.start), int(feature.location.end), mylocus, myproduct, mygene, sep='\t', file=write_out)
-                    
-            write_out.close()
-
-            df = pd.read_csv(f'{sample_path_name}/{group}/{group}_temp.csv', sep='\t', names=["chrom", "start", "stop", "locus", "product", "gene"])
-            os.remove(f'{sample_path_name}/{group}/{group}_temp.csv')
-            df = df.sort_values(['start', 'gene'], ascending=[True, False])
-            df = df.drop_duplicates('start')
-            pro = df.reset_index(drop=True)
-            pro.index = pd.IntervalIndex.from_arrays(pro['start'], pro['stop'], closed='both')
-            annotation_dict[chromosome] = pro
-        for gbk_chrome, pro in annotation_dict.items():
-            ref_pos = list(table_df)
-            ref_series = pd.Series(ref_pos)
-            ref_df = pd.DataFrame(ref_series.str.split(':', expand=True).values, columns=['reference', 'position'])
-            all_ref = ref_df[ref_df['reference'] == gbk_chrome]
-            write_out = open(f'{sample_path_name}/{group}/{group}annotations.csv', 'a')
-            positions = all_ref.position.to_frame()
-            for index, row in positions.iterrows():
-                pos = row.position
-                try:
-                    aaa = pro.iloc[pro.index.get_loc(int(pos))][['chrom', 'locus', 'product', 'gene']]
-                    try:
-                        chrom, name, locus, tag = aaa.values[0]
-                        print("{}:{}\t{}, {}, {}".format(chrom, pos, locus, tag, name), file=write_out)
-                    except ValueError:
-                        # if only one annotation entire chromosome (such with flu) then having [0] fails
-                        chrom, name, locus, tag = aaa.values
-                        print("{}:{}\t{}, {}, {}".format(chrom, pos, locus, tag, name), file=write_out)
-                except KeyError:
-                    print("{}:{}\tNo annotated product" .format(gbk_chrome, pos), file=write_out)
-            write_out.close()
-
-        annotations_df = pd.read_csv(f'{sample_path_name}/{group}/{group}annotations.csv', sep='\t', header=None, names=['index', 'annotations'], index_col='index')
-        os.remove(f'{sample_path_name}/{group}/{group}annotations.csv')
-        table_df_transposed = table_df.T
-        table_df_transposed.index = table_df_transposed.index.rename('index')
-        table_df_transposed = table_df_transposed.merge(annotations_df, left_index=True, right_index=True)
-        table_df = table_df_transposed.T
-        return table_df
 
 class Hash_Names:
 

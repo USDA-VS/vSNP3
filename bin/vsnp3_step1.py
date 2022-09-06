@@ -215,8 +215,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
 
     ---------------------------------------------------------
     Conda:
-    conda create -n py39 python=3.9
-    conda install biopython minimap2 cairosvg dask freebayes humanize numpy openpyxl pandas parallel pigz regex samtools=1.14 seqkit sourmash spades svgwrite pyvcf py-cpuinfo scikit-allel vcflib
+    conda install vsnp3=3.09 -c conda-forge -c bioconda
     ---------------------------------------------------------
 
     When running samples through step1 and 2 of vSNP, or when running a routine analysis, set up dependencies using vsnp3_path_adder.py
@@ -287,7 +286,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     if not os.path.exists(temp_dir):
         os.makedirs(temp_dir)
     files_grab = []
-    for files in ('*.aux', '*.log', '*tex', '*png', "*_seqkit_stats.txt"):
+    for files in ('*_report.out', '*.aux', '*.log', '*tex', '*png', "*_seqkit_stats.txt"):
         files_grab.extend(glob.glob(files))
     for each in files_grab:
         shutil.move(each, temp_dir)
