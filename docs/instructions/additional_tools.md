@@ -82,7 +82,7 @@ cd ~/tree_test
 ```
 Just an Example.  Supply your specific path to wrapper.
 ```
-~/git/gitlab/vsnp3/bin/vsnp3_ksnp_wrapper.sh
+vsnp3_ksnp3_wrapper.sh
 ```
 
 # Kraken/Krona
@@ -98,7 +98,7 @@ conda activate kraken
 ```
 
 ```
-conda install kraken2 krona krakentools sra-tools=2.11.0 pandas -c conda-forge -c bioconda 
+conda install kraken2 krona krakentools sra-tools=2.11.0 pandas pigz -c conda-forge -c bioconda 
 ```
 
 This asking to do additional setup for these programs.
@@ -151,5 +151,5 @@ rm SRR6046640; mv SRR6046640_1.fastq SRR6046640_R1.fastq; mv SRR6046640_2.fastq 
 ```
 Just an Example.  Supply your specific path to wrapper.
 ```
-~/git/gitlab/vsnp3/bin/vsnp3_kraken2_wrapper.py -r1 SRR6046640_R1.fastq.gz -r2 SRR6046640_R2.fastq.gz --database ~/k2_standard_08gb
+vsnp3_kraken2_wrapper.py -r1 SRR6046640_R1.fastq.gz -r2 SRR6046640_R2.fastq.gz --database ~/k2_standard_08gb
 ```
