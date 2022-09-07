@@ -33,7 +33,7 @@ Download list
 for i in `cat list`; do vsnp3_download_fasta_gbk_gff_by_acc.py -a $i -f; done
 ```
 
-Make a vsnp3 available from github
+vsnp3 available from github
 ```
 cd ~; git clone https://github.com/USDA-VS/vsnp3.git
 ```
@@ -143,7 +143,7 @@ ktUpdateTaxonomy.sh
 ## FASTQ for Kraken Testing
 
 ```
-cd; mkdir kraken_test
+cd; mkdir kraken_test; cd kraken_test
 ```
 ```
 wget https://sra-pub-run-odp.s3.amazonaws.com/sra/SRR6046640/SRR6046640 #fortuitum
