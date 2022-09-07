@@ -33,6 +33,11 @@ Download list
 for i in `cat list`; do vsnp3_download_fasta_gbk_gff_by_acc.py -a $i -f; done
 ```
 
+Make a vsnp3 available from github
+
+
+cd ~; git clone https://github.com/USDA-VS/vsnp3.git
+
 # Mashtree
 
 New conda environment
@@ -82,7 +87,7 @@ cd ~/tree_test
 ```
 Just an Example.  Supply your specific path to wrapper.
 ```
-vsnp3_ksnp3_wrapper.sh
+~/vsnp3/bin/vsnp3_ksnp3_wrapper.sh
 ```
 
 # Kraken/Krona
@@ -151,5 +156,5 @@ rm SRR6046640; mv SRR6046640_1.fastq SRR6046640_R1.fastq; mv SRR6046640_2.fastq 
 ```
 Just an Example.  Supply your specific path to wrapper.
 ```
-vsnp3_kraken2_wrapper.py -r1 SRR6046640_R1.fastq.gz -r2 SRR6046640_R2.fastq.gz --database ~/k2_standard_08gb
+~/vsnp3/bin/vsnp3_kraken2_wrapper.py -r1 SRR6046640_R1.fastq.gz -r2 SRR6046640_R2.fastq.gz --database ~/k2_standard_08gb
 ```
