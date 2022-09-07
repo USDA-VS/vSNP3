@@ -34,9 +34,9 @@ for i in `cat list`; do vsnp3_download_fasta_gbk_gff_by_acc.py -a $i -f; done
 ```
 
 Make a vsnp3 available from github
-
-
+```
 cd ~; git clone https://github.com/USDA-VS/vsnp3.git
+```
 
 # Mashtree
 
