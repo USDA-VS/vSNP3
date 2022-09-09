@@ -1,6 +1,6 @@
 # vSNP3
 
-This is an introduction to vSNP version 3.  A comprehensive overview of vSNP with version 2 is [here](https://github.com/USDA-VS/vSNP).
+This is an introduction to vSNP version 3.  A comprehensive overview of vSNP version 2 is [here](https://github.com/USDA-VS/vSNP/blob/master/docs/detailed_usage.md) with version 2 GitHub repo [here](https://github.com/USDA-VS/vSNP).
 
 vSNP3 generates BAM, VCF and annotated SNP tables and corresponding phylogenetic trees to achieve a high resolution SNP analysis.
 

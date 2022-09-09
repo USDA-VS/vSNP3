@@ -1,14 +1,16 @@
 # Additional Programs
 
-Many programs can be used to help identify reads.  Three programs that can be useful to use alongside vSNP are Mashtree, kSNP and Kraken.  
+Many programs can be used to help identify reads.  Three programs useful to use alongside vSNP are Mashtree, kSNP and Kraken.  
 
-[Mashtree](https://github.com/lskatz/mashtree) and [kSNP](https://pubmed.ncbi.nlm.nih.gov/25913206) are reference independent phylogenetic tree building programs.  Mashtree is very fast, kSNP is slower but results may be more accurate and additional information is provide to help qualify results.
+Best results from vSNP are provided when a sample is less than 1,000 SNPs from a reference.  If a sample is too distant from a reference the alignment error can cause time consuming corrections.  Good reference selection is important for best results.  Mashtree and kSNP can help in reference selection.  [Mashtree](https://github.com/lskatz/mashtree) and [kSNP](https://pubmed.ncbi.nlm.nih.gov/25913206) are reference independent phylogenetic tree building programs.  Mashtree is very fast, kSNP is slower but results may be more accurate and additional information is provide to help qualify results.  
 
-[Kraken](https://ccb.jhu.edu/software/kraken2/) uses kmers to identify reads.  If a sample is not behaving as expected or contamination is suspected Kraken is a powerful tool for determining read identification.  When used with Krona an easy to read, and share, HTML file is provided.
+[Kraken](https://ccb.jhu.edu/software/kraken2/) uses kmers to identify reads.  If a sample is not behaving as expected or contamination is suspected Kraken is a powerful tool for determining read identification quickly.  When used with Krona an easy to read HTML file is provided.
+
+Below are brief installation and usage insturctions for these tools.  See their individual links for more detail.  The scripts provided for kSNP and Kraken are only for example.  Users should make updates as needed.
 
 # Example Dataset
 
-## FASTAs for reference free tree building
+## FASTAs for reference-free tree building
 
 ```
 cd ~; mkdir tree_test; cd tree_test
@@ -37,6 +39,8 @@ vsnp3 available from github
 ```
 cd ~; git clone https://github.com/USDA-VS/vsnp3.git
 ```
+
+Building Mashtree, kSNP and Kraken in their own conda environments ensures installation dependencies do not conflict.  Scripts provided in the cloned vsnp3 repo above are needed since conda environments are independent.
 
 # Mashtree
 
@@ -81,7 +85,7 @@ conda activate ksnp
 ```
 conda install -c hcc -c conda-forge -c bioconda ksnp fasttree # Only works from Linux environment (WSL works)
 ```
-Build tree from FASTAs
+Build tree from FASTAs.  If Mashtree was ran on this directory update so directory only contains FASTAs.
 ```
 cd ~/tree_test
 ```
