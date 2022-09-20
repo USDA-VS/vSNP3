@@ -72,6 +72,8 @@ mashtree --sketch-size 1000000 --numcpus 4 *.fasta > mashtree.tre
 
 # kSNP
 
+Only works from Linux environment (WSL works), conda builds for Macs unavailable.
+
 New conda environment
 
 ```
@@ -83,7 +85,7 @@ conda activate ksnp
 ```
 
 ```
-conda install -c hcc -c conda-forge -c bioconda ksnp fasttree # Only works from Linux environment (WSL works)
+conda install -c hcc -c conda-forge -c bioconda ksnp fasttree
 ```
 Build tree from FASTAs.  If Mashtree was ran on this directory update so directory only contains FASTAs.
 ```
