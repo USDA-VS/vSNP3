@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.09"
+__version__ = "3.11"
 
 import os
 import gzip
@@ -26,8 +26,8 @@ from vsnp3_file_setup import Excel_Stats
 
 class Spoligo(Setup):
 
-    def __init__(self, FASTQ_R1=None, FASTQ_R2=None, debug=False):
-        Setup.__init__(self, FASTQ_R1=FASTQ_R1, FASTQ_R2=FASTQ_R2, debug=debug)
+    def __init__(self, SAMPLE_NAME=None, FASTQ_R1=None, FASTQ_R2=None, debug=False):
+        Setup.__init__(self, SAMPLE_NAME=SAMPLE_NAME, FASTQ_R1=FASTQ_R1, FASTQ_R2=FASTQ_R2, debug=debug)
         self.print_run_time('Spoligotype')
         self.cpu_count_half = int(self.cpus / 2)
         real_path = os.path.dirname(os.path.realpath(__file__))
@@ -235,13 +235,14 @@ if __name__ == "__main__": # execute if directly access by the interpreter
    
     '''), epilog='''---------------------------------------------------------''')
     
+    parser.add_argument('-n', '--SAMPLE_NAME', action='store', dest='SAMPLE_NAME', required=False, help='Force output files to this sample name')
     parser.add_argument('-r1', '--FASTQ_R1', action='store', dest='FASTQ_R1', required=True, help='Required: single read')
     parser.add_argument('-r2', '--FASTQ_R2', action='store', dest='FASTQ_R2', required=False, default=None, help='Optional: paired read')
     parser.add_argument('-d', '--debug', action='store_true', dest='debug', default=False, help='turn off map.pooling of samples')
     parser.add_argument('-v', '--version', action='version', version=f'{os.path.abspath(__file__)}: version {__version__}')
 
     args = parser.parse_args()
-    spoligo = Spoligo(FASTQ_R1=args.FASTQ_R1, FASTQ_R2=args.FASTQ_R2, debug=args.debug)
+    spoligo = Spoligo(SAMPLE_NAME=args.SAMPLE_NAME, FASTQ_R1=args.FASTQ_R1, FASTQ_R2=args.FASTQ_R2, debug=args.debug)
     spoligo.spoligo()
 
     #Latex report

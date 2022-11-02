@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.09"
+__version__ = "3.11"
 
 import os
 import sys
@@ -278,7 +278,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     parser.add_argument('-x', '--n_threshold', action='store', dest='n_threshold', default=50, required=False, help='Optional: Minimum N threshold.  SNPs between this and qual_threshold are reported as N')
     parser.add_argument('-y', '--mq_threshold', action='store', dest='mq_threshold', default=56, required=False, help='Optional: At least one position per group must have this minimum MQ threshold to be called.')
     parser.add_argument('-f', '--fix_vcfs', action='store_true', dest='fix_vcfs', help='Optional: Just fix VCF files and exit')
-    parser.add_argument('-remove', '--remove', action='store_true', dest='remove', help='Optional: Remove VCF files from current working directory when VCF files in current working director are used, that is when --wd is not used VCF files are removed with option.  VCF files are still zipped in "vcf_starting_files.zip".')
+    parser.add_argument('-k', '--keep_ind_vcfs', action='store_true', dest='keep_ind_vcfs', default=False, help='Optional: Keep VCF files in current working directory when VCF files in current working director are used, VCF files are always saved and zipped in "vcf_starting_files.zip".')
     parser.add_argument('-a', '--all_vcf', action='store_true', dest='all_vcf', required=False, help='Optional: create table with all isolates')
     parser.add_argument('-i', '--find_new_filters', action='store_true', dest='find_new_filters', help='Optional: find new positions to apply to the filter file.  Positions must be manually added to filter file.  They are not added by running this command.  Only text files are output showing position detail. Curant before adding filters')
     parser.add_argument('-abs_pos', '--abs_pos', action='store', dest='abs_pos', required=False, help='Optional: Make a group on defining SNP.  Must be supplied with --group option.  Format as chrom in VCF, chrom:10000.')
@@ -360,7 +360,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     vcf_to_df.vcf_bad_list = vcf_to_df.vcf_bad_list + group.vcf_bad_list
 
     #by default the VCF files used are not deleted.  They are only deleted when using --remove option AND the files were ran from the current working directory.  ie the --wd option was not used.:
-    if args.remove and cwd_test:
+    if not args.keep_ind_vcfs and cwd_test:
         for each_vcf in vcf_list:
             try:
                 os.remove(each_vcf)

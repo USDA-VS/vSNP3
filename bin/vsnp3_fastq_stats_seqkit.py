@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.09"
+__version__ = "3.11"
 
 import os
 import subprocess
@@ -43,8 +43,8 @@ class FASTQ_Container:
 class FASTQ_Stats(Setup):
     ''' 
     '''
-    def __init__(self, FASTQ_R1=None, FASTQ_R2=None, debug=False):
-        Setup.__init__(self, FASTQ_R1=FASTQ_R1, FASTQ_R2=FASTQ_R2, debug=debug)
+    def __init__(self, SAMPLE_NAME=None, FASTQ_R1=None, FASTQ_R2=None, debug=False):
+        Setup.__init__(self, SAMPLE_NAME=SAMPLE_NAME, FASTQ_R1=FASTQ_R1, FASTQ_R2=FASTQ_R2, debug=debug)
 
     def run(self,):
         for arg_read_name, actual_file in self.FASTQ_dict.items():
@@ -171,7 +171,8 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     vsnp3_fastq_stats_seqkit.py -r1 *fastq.gz #single
 
     '''), epilog='''---------------------------------------------------------''')
-
+    
+    parser.add_argument('-n', '--SAMPLE_NAME', action='store', dest='SAMPLE_NAME', required=False, help='Force output files to this sample name')
     parser.add_argument('-r1', '--read1', action='store', dest='FASTQ_R1', required=False, help='Required: single read, R1 when Illumina read')
     parser.add_argument('-r2', '--read2', action='store', dest='FASTQ_R2', required=False, default=None, help='Optional: R2 Illumina read')
     parser.add_argument('-d', '--debug', action='store_true', dest='debug', default=False, help='keep temp file')
@@ -182,7 +183,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     print(args)
     print("\n")
 
-    fastq_stats = FASTQ_Stats(FASTQ_R1=args.FASTQ_R1, FASTQ_R2=args.FASTQ_R2, debug=args.debug)
+    fastq_stats = FASTQ_Stats(SAMPLE_NAME=args.SAMPLE_NAME, FASTQ_R1=args.FASTQ_R1, FASTQ_R2=args.FASTQ_R2, debug=args.debug)
     fastq_stats.run()
 
     print(f'\t R1 File Size: {bcolors.WHITE}{fastq_stats.R1.file_size}{bcolors.ENDC} \n \

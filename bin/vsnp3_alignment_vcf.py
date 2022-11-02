@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.09"
+__version__ = "3.11"
 
 import os
 import subprocess
@@ -27,11 +27,11 @@ class Alignment(Setup):
     ''' 
     '''
 
-    def __init__(self, FASTQ_R1=None, FASTQ_R2=None, reference=None, nanopore=False, gbk=None, assemble_unmap=None, debug=False):
+    def __init__(self, SAMPLE_NAME=None, FASTQ_R1=None, FASTQ_R2=None, reference=None, nanopore=False, gbk=None, assemble_unmap=None, debug=False):
         '''
         Start at class call
         '''
-        Setup.__init__(self, FASTA=reference, FASTQ_R1=FASTQ_R1, FASTQ_R2=FASTQ_R2, debug=debug)
+        Setup.__init__(self, SAMPLE_NAME=SAMPLE_NAME, FASTA=reference, FASTQ_R1=FASTQ_R1, FASTQ_R2=FASTQ_R2, debug=debug)
         self.print_run_time('Align and make VCF file')
         self.nanopore = nanopore
         self.gbk = gbk
@@ -318,7 +318,7 @@ class Alignment(Setup):
         self.alignment_vcf_run_summary = alignment_vcf_run_summary
 
 
-    def latex(self, tex):
+    def latex(self, tex, groups=None):
         blast_banner = Banner(f'Read Mapping against {self.reference_name} using {self.aligner}')
         print(r'\begin{table}[ht!]', file=tex)
         print(r'\begin{adjustbox}{width=1\textwidth}', file=tex)
@@ -349,6 +349,12 @@ class Alignment(Setup):
         bam = self.zero_coverage.bam.replace('_', '\_')
         print(f'{bam} & {self.zero_coverage.reference_length:,} & {(self.zero_coverage.genome_coverage*100):,.2f}\% & {self.zero_coverage.ave_coverage:,.1f}X & {self.zero_coverage.total_zero_coverage:,} & {self.zero_coverage.good_snp_count:,} \\\\', file=tex)
         print(r'\hline', file=tex)
+
+        if groups:
+            print(r'\hline', file=tex)
+            print(r'Group Assignment & \multicolumn{4}{l}{ ' + f'{groups}' + r'} \\', file=tex)
+            print(r'\hline', file=tex)
+
         print(r'\end{tabular}', file=tex)
 
         print(r'\end{adjustbox}', file=tex)
@@ -386,10 +392,11 @@ if __name__ == "__main__": # execute if directly access by the interpreter
 
     '''), epilog='''---------------------------------------------------------''')
 
+    parser.add_argument('-n', '--SAMPLE_NAME', action='store', dest='SAMPLE_NAME', required=False, help='Force output files to this sample name')
     parser.add_argument('-r1', '--read1', action='store', dest='FASTQ_R1', required=True, help='Required: single read, R1 when Illumina read')
     parser.add_argument('-r2', '--read2', action='store', dest='FASTQ_R2', required=False, default=None, help='Optional: R2 Illumina read')
     parser.add_argument('-r', '--reference', nargs='*', dest='FASTA', required=False, help='FASTA file to be used as reference.  Multiple can be specified with wildcard')
-    parser.add_argument('-n', '--nanopore', action='store_true', dest='nanopore', default=False, help='Beta, if true run alignment with minimap2 map-ont option')
+    parser.add_argument('-o', '--nanopore', action='store_true', dest='nanopore', default=False, help='Beta, if true run alignment with minimap2 map-ont option')
     parser.add_argument('-b', '--gbk', nargs='*', dest='gbk', required=False, default=None, help='Optional: gbk to annotate VCF file.  Multiple can be specified with wildcard')
     parser.add_argument('-assemble_unmap', '--assemble_unmap', action='store_true', dest='assemble_unmap', help='skip assembly of unmapped reads')
     parser.add_argument('-d', '--debug', action='store_true', dest='debug', default=False, help='keep temp file')
@@ -418,7 +425,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
         return concatenated_FASTA, fastas_used
     concatenated_FASTA, fastas_used = concat_fasta(args.FASTA) # -f option for FASTA will take wildcard for multiple FASTAs
 
-    alignment = Alignment(FASTQ_R1=args.FASTQ_R1, FASTQ_R2=args.FASTQ_R2, reference=concatenated_FASTA, nanopore=args.nanopore, gbk=args.gbk, assemble_unmap=args.assemble_unmap, debug=args.debug)
+    alignment = Alignment(SAMPLE_NAME=args.SAMPLE_NAME, FASTQ_R1=args.FASTQ_R1, FASTQ_R2=args.FASTQ_R2, reference=concatenated_FASTA, nanopore=args.nanopore, gbk=args.gbk, assemble_unmap=args.assemble_unmap, debug=args.debug)
     alignment.run()
 
     #Latex report

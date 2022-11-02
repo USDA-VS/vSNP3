@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.09"
+__version__ = "3.11"
 
 import os
 import sys
@@ -26,11 +26,11 @@ from vsnp3_group_reporter import GroupReporter
 class vSNP3_Step1(Setup):
     ''' 
     '''
-    def __init__(self, FASTA=None, FASTQ_R1=None, FASTQ_R2=None, gbk=None, reference_type=None, nanopore=False, assemble_unmap=None, spoligo=None, debug=False):
+    def __init__(self, SAMPLE_NAME=None, FASTA=None, FASTQ_R1=None, FASTQ_R2=None, gbk=None, reference_type=None, nanopore=False, assemble_unmap=None, spoligo=None, debug=False):
         '''
         Start at class call
         '''
-        Setup.__init__(self, FASTQ_R1=FASTQ_R1)
+        Setup.__init__(self, SAMPLE_NAME=SAMPLE_NAME, FASTQ_R1=FASTQ_R1)
         self.assemble_unmap = assemble_unmap
         self.spoligo = spoligo
         self.latex_report = Latex_Report(self.sample_name)
@@ -38,7 +38,7 @@ class vSNP3_Step1(Setup):
         self.nanopore = nanopore
         if FASTA: #IF -f REFERENCE FASTA PROVIDED USE IT, ie .fasta
             concatenated_FASTA = self.concat_fasta(FASTA) # -f option for FASTA will take wildcard for multiple FASTAs
-            Setup.__init__(self, FASTA=concatenated_FASTA, FASTQ_R1=FASTQ_R1, FASTQ_R2=FASTQ_R2, gbk=gbk, debug=debug)
+            Setup.__init__(self, SAMPLE_NAME=SAMPLE_NAME, FASTA=concatenated_FASTA, FASTQ_R1=FASTQ_R1, FASTQ_R2=FASTQ_R2, gbk=gbk, debug=debug)
             self.reference_type = None
             with open(self.FASTA) as f:
                 self.top_header_description = f.readline()
@@ -46,12 +46,12 @@ class vSNP3_Step1(Setup):
             reference_options = Ref_Options(reference_type)
             concatenated_FASTA = self.concat_fasta(reference_options.fasta)
             self.excel_stats.excel_dict["Reference"] = f'{reference_type} Forced'
-            Setup.__init__(self, FASTA=concatenated_FASTA, FASTQ_R1=FASTQ_R1, FASTQ_R2=FASTQ_R2, gbk=reference_options.gbk, debug=debug)
+            Setup.__init__(self, SAMPLE_NAME=SAMPLE_NAME, FASTA=concatenated_FASTA, FASTQ_R1=FASTQ_R1, FASTQ_R2=FASTQ_R2, gbk=reference_options.gbk, debug=debug)
             self.reference_type = reference_type
             with open(self.FASTA) as f:
                 self.top_header_description = f.readline()
         else: #IF NO REFERENCE PROVIDED SEEK A "BEST REFERENCE", for tb, brucella, paraTB or SARS-CoV-2
-            Setup.__init__(self, FASTQ_R1=FASTQ_R1, FASTQ_R2=FASTQ_R2,)
+            Setup.__init__(self, SAMPLE_NAME=SAMPLE_NAME, FASTQ_R1=FASTQ_R1, FASTQ_R2=FASTQ_R2,)
             self.best_reference = Best_Reference(FASTQ_R1=FASTQ_R1)
             self.best_reference.run()
             self.top_header_description = self.best_reference.top_fasta_header
@@ -82,7 +82,7 @@ class vSNP3_Step1(Setup):
             concatenated_FASTA = self.concat_fasta(reference_options.fasta)
             self.gbk = reference_options.gbk
             self.excel_stats.excel_dict["Reference"] = f'{reference_options.select_ref} by Best Reference'
-            Setup.__init__(self, FASTA=concatenated_FASTA, FASTQ_R1=FASTQ_R1, FASTQ_R2=FASTQ_R2, gbk=reference_options.gbk, debug=debug)
+            Setup.__init__(self, SAMPLE_NAME=SAMPLE_NAME, FASTA=concatenated_FASTA, FASTQ_R1=FASTQ_R1, FASTQ_R2=FASTQ_R2, gbk=reference_options.gbk, debug=debug)
             self.best_reference.latex(self.latex_report.tex)
             self.best_reference.excel(self.excel_stats.excel_dict)
             if reference_options.fasta == None:
@@ -111,7 +111,7 @@ class vSNP3_Step1(Setup):
         '''
         description
         '''
-        fastq_stats = FASTQ_Stats(FASTQ_R1=self.FASTQ_R1, FASTQ_R2=self.FASTQ_R2, debug=self.debug)
+        fastq_stats = FASTQ_Stats(SAMPLE_NAME=self.sample_name, FASTQ_R1=self.FASTQ_R1, FASTQ_R2=self.FASTQ_R2, debug=self.debug)
         fastq_stats.run()
         fastq_stats.latex(self.latex_report.tex)
         fastq_stats.excel(self.excel_stats.excel_dict)
@@ -124,7 +124,7 @@ class vSNP3_Step1(Setup):
             pass
         self.MYCO = MYCO
         if MYCO and self.spoligo:
-            spoligo = Spoligo(self.FASTQ_R1, self.FASTQ_R2, self.debug)
+            spoligo = Spoligo(SAMPLE_NAME=self.sample_name, FASTQ_R1=self.FASTQ_R1, FASTQ_R2=self.FASTQ_R2, debug=self.debug)
             spoligo.spoligo()
             spoligo.latex(self.latex_report.tex)
             spoligo.excel(self.excel_stats.excel_dict)
@@ -136,20 +136,21 @@ class vSNP3_Step1(Setup):
         else:
             nanopore = False
             
-        alignment = Alignment(FASTQ_R1=self.FASTQ_R1, FASTQ_R2=self.FASTQ_R2, reference=self.reference, nanopore=nanopore, gbk=self.gbk, assemble_unmap=self.assemble_unmap, debug=self.debug)
+        alignment = Alignment(SAMPLE_NAME=self.sample_name, FASTQ_R1=self.FASTQ_R1, FASTQ_R2=self.FASTQ_R2, reference=self.reference, nanopore=nanopore, gbk=self.gbk, assemble_unmap=self.assemble_unmap, debug=self.debug)
         alignment.run()
 
         if self.reference_type:
             try:
                 group_reporter = GroupReporter(alignment.zero_coverage_vcf_file_path, self.reference_type)
-                self.excel_stats.excel_dict['Groups'] = ", ".join(group_reporter.get_groups())
+                groups = ", ".join(group_reporter.get_groups())
+                self.excel_stats.excel_dict['Groups'] = groups
             except ValueError:
                 self.excel_stats.excel_dict['Groups'] = "group file not provided"
         else:
             self.excel_stats.excel_dict['Groups'] = "group file not provided"
         
 
-        alignment.latex(self.latex_report.tex)
+        alignment.latex(self.latex_report.tex, groups)
         alignment.excel(self.excel_stats.excel_dict)
 
         #FASTQ usability
@@ -215,7 +216,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
 
     ---------------------------------------------------------
     Conda:
-    conda install vsnp3=3.09 -c conda-forge -c bioconda
+    conda install vsnp3=3.11 -c conda-forge -c bioconda
     ---------------------------------------------------------
 
     When running samples through step1 and 2 of vSNP, or when running a routine analysis, set up dependencies using vsnp3_path_adder.py
@@ -244,12 +245,13 @@ if __name__ == "__main__": # execute if directly access by the interpreter
 
     '''), epilog='''---------------------------------------------------------''')
 
+    parser.add_argument('-n', '--SAMPLE_NAME', action='store', dest='SAMPLE_NAME', required=False, help='Force output files to this sample name')
     parser.add_argument('-r1', '--FASTQ_R1', action='store', dest='FASTQ_R1', required=True, help='Provide R1 FASTQ gz file.  A single read file can also be supplied to this option')
     parser.add_argument('-r2', '--FASTQ_R2', action='store', dest='FASTQ_R2', required=False, default=None, help='Optional: provide R2 FASTQ gz file')
     parser.add_argument('-f', '--FASTA', nargs='*', dest='FASTA', required=False, help='FASTA file to be used as reference.  Multiple can be specified with wildcard')
     parser.add_argument('-b', '--gbk', nargs='*', dest='gbk', required=False, default=None, help='Optional: gbk to annotate VCF file.  Multiple can be specified with wildcard')
     parser.add_argument('-t', '--reference_type', action='store', dest='reference_type', required=False, default=None, help="Optional: Provide directory name with FASTA and GBK file/s")
-    parser.add_argument('-n', '--nanopore', action='store_true', dest='nanopore', default=False, help='if true run alignment optimized for nanopore reads')
+    parser.add_argument('-o', '--nanopore', action='store_true', dest='nanopore', default=False, help='if true run alignment optimized for nanopore reads')
     parser.add_argument('-assemble_unmap', '--assemble_unmap', action='store_true', dest='assemble_unmap', help='Optional: skip assembly of unmapped reads.   See also vsnp3_assembly.py')
     parser.add_argument('-spoligo', '--spoligo', action='store_true', dest='spoligo', help='Optional: get spoligotype if TB complex.  See also vsnp3_spoligotype.py')
     parser.add_argument('-d', '--debug', action='store_true', dest='debug', help='keep spades output directory')
@@ -266,10 +268,10 @@ if __name__ == "__main__": # execute if directly access by the interpreter
         if hasattr(module, '__version__') and name in program_list: 
             python_programs.append(f'{name}, {module.__version__}')
 
-    vsnp = vSNP3_Step1(FASTQ_R1=args.FASTQ_R1, FASTQ_R2=args.FASTQ_R2, FASTA=args.FASTA, gbk=args.gbk, reference_type=args.reference_type, nanopore=args.nanopore, assemble_unmap=args.assemble_unmap, spoligo=args.spoligo, debug=args.debug)
+    vsnp = vSNP3_Step1(SAMPLE_NAME=args.SAMPLE_NAME, FASTQ_R1=args.FASTQ_R1, FASTQ_R2=args.FASTQ_R2, FASTA=args.FASTA, gbk=args.gbk, reference_type=args.reference_type, nanopore=args.nanopore, assemble_unmap=args.assemble_unmap, spoligo=args.spoligo, debug=args.debug)
     vsnp.run()
 
-    with open('run_log.txt', 'w') as run_log:
+    with open(f'{vsnp.sample_name}_run_log.txt', 'w') as run_log:
         print(f'\n{os.path.basename(__file__)} SET ARGUMENTS:', file=run_log)
         print(args, file=run_log)
         print('\nCall Summary:', file=run_log)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.09"
+__version__ = "3.11"
 
 import os
 import shutil
@@ -27,7 +27,7 @@ class Setup:
     Standarize setup
     '''
 
-    def __init__(self, FASTA=None, FASTQ_R1=None, FASTQ_R2=None, reference=None, gbk=None, debug=False):
+    def __init__(self, SAMPLE_NAME=None, FASTA=None, FASTQ_R1=None, FASTQ_R2=None, reference=None, gbk=None, debug=False):
         self.cwd = os.getcwd()
         self.FASTA = FASTA
         self.FASTQ_R1 = FASTQ_R1
@@ -102,6 +102,8 @@ class Setup:
         self.startTime = datetime.now()
         self.cpus = multiprocessing.cpu_count() - 2
         self.date_stamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        if SAMPLE_NAME:
+            self.sample_name = SAMPLE_NAME
 
     def print_time(self,):
         '''

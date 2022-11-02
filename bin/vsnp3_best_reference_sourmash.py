@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.09"
+__version__ = "3.11"
 
 import os
 import subprocess
@@ -20,11 +20,11 @@ class Best_Reference(Setup):
     ''' 
     '''
 
-    def __init__(self, FASTA=None, FASTQ_R1=None, FASTQ_R2=None, debug=False):
+    def __init__(self, SAMPLE_NAME=None, FASTA=None, FASTQ_R1=None, FASTQ_R2=None, debug=False):
         '''
         Start at class call
         '''
-        Setup.__init__(self, FASTQ_R1=FASTQ_R1)
+        Setup.__init__(self, SAMPLE_NAME=SAMPLE_NAME, FASTQ_R1=FASTQ_R1)
         self.script_path = os.path.dirname(os.path.realpath(__file__))
 
     def run(self,):
@@ -189,6 +189,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
 
     '''), epilog='''---------------------------------------------------------''')
 
+    parser.add_argument('-n', '--SAMPLE_NAME', action='store', dest='SAMPLE_NAME', required=False, help='Force output files to this sample name')
     parser.add_argument('-r1', '--read1', action='store', dest='FASTQ_R1', required=False, help='Required: single read, R1 when Illumina read')
     parser.add_argument('-d', '--debug', action='store_true', dest='debug', default=False, help='keep temp file')
     parser.add_argument('-v', '--version', action='version', version=f'{os.path.basename(__file__)}: version {__version__}')
@@ -198,7 +199,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     print(args)
     print("\n")
 
-    best_reference = Best_Reference(FASTQ_R1=args.FASTQ_R1)
+    best_reference = Best_Reference(SAMPLE_NAME=args.SAMPLE_NAME, FASTQ_R1=args.FASTQ_R1)
     best_reference.run()
 
     #Latex report
