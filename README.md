@@ -13,7 +13,7 @@ Tested with Python 3.7 - 3.9.
 Anaconda [setup](./docs/instructions/conda_instructions.md)
 
 ```
-conda install vsnp3=3.11 -c conda-forge -c bioconda
+conda install vsnp3=3.12 -c conda-forge -c bioconda
 ```
 
 ## Installation test

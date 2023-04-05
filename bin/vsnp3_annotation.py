@@ -66,14 +66,14 @@ class Annotation():
         self.snp_base_code = "SNP nt not provided"
         self.ref_aa = "n/a"
         self.snp_aa = "n/a"
-        self.gene = "not listed"
+        self.gene = "unlisted gene"
         self.product = "No annotated product"
         aa_residue_pos = ""
         self.aa_pos = "n/a"
         self.feature_found = False
         try:
             for feature in self.gbk_dict[chrom].features:
-                if "CDS" in feature.type:
+                if "CDS" == feature.type or "tRNA" == feature.type or "rRNA" == feature.type or "repeat_region" == feature.type or "mobile_element" == feature.type or "ncRNA" == feature.type:
                     for part in feature.location.parts:
                         if position in range(part.start, part.end):
                             self.feature_found = True
@@ -88,7 +88,13 @@ class Annotation():
                             try:
                                 self.product = feature.qualifiers['product'][0]
                             except KeyError:
-                                self.product = feature.qualifiers['locus_tag'][0]
+                                try:
+                                    self.product = feature.qualifiers['locus_tag'][0]
+                                except KeyError:
+                                    try:
+                                        self.product = feature.type + ", " + feature.qualifiers['label'][0]
+                                    except KeyError:
+                                        self.product = f'{feature.type}, product_unknown'
                             if nt_in_aa == '0':
                                 aa_residue_pos = int(aa_residue)
                                 nt_index_aa = 2 #set index
@@ -115,7 +121,7 @@ class Annotation():
                             try:
                                 self.ref_aa = feature.qualifiers["translation"][0][zero_index_residue]
                             except (IndexError, KeyError) as e:
-                                self.ref_aa = "gbk_error"
+                                self.ref_aa = "unfound_ref_AA"
                             rbc = self.gbk_dict[chrom].seq[left:right]
                             rbc_list = list(rbc)
                             self.reference_base_code = "".join(rbc_list)
@@ -134,11 +140,18 @@ class Annotation():
                                 self.mutation_type = "silent mutation"
                             elif self.snp_aa == "ambiguous":
                                 self.mutation_type = "unsure-ambiguous"
+                            elif self.ref_aa == "unfound_ref_AA":
+                                self.mutation_type = ""
                             else:
                                 self.mutation_type = "nonsynonymous"
                             return
         except KeyError:
             print(f'\n### KeyError: incorrect chrom in dataset\n### grep -l {chrom} *vcf to find file with error\n### File must be removed\n')
+            try:
+                print(f'Feature Type: {feature.type}')
+            except UnboundLocalError:
+                pass
+            print(f'Position: {position}\n')
             sys.exit(0)
         return
 

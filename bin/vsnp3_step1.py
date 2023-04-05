@@ -139,15 +139,16 @@ class vSNP3_Step1(Setup):
         alignment = Alignment(SAMPLE_NAME=self.sample_name, FASTQ_R1=self.FASTQ_R1, FASTQ_R2=self.FASTQ_R2, reference=self.reference, nanopore=nanopore, gbk=self.gbk, assemble_unmap=self.assemble_unmap, debug=self.debug)
         alignment.run()
 
+        groups = "group file not provided"
         if self.reference_type:
             try:
                 group_reporter = GroupReporter(alignment.zero_coverage_vcf_file_path, self.reference_type)
                 groups = ", ".join(group_reporter.get_groups())
                 self.excel_stats.excel_dict['Groups'] = groups
             except ValueError:
-                self.excel_stats.excel_dict['Groups'] = "group file not provided"
+                self.excel_stats.excel_dict['Groups'] = groups
         else:
-            self.excel_stats.excel_dict['Groups'] = "group file not provided"
+            self.excel_stats.excel_dict['Groups'] = groups
         
 
         alignment.latex(self.latex_report.tex, groups)

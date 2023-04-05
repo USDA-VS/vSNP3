@@ -185,7 +185,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     vsnp3_assmbly.py -r1 *_R1*.fastq.gz -r2 *_R2*.fastq.gz
 
     If just stats is needed:
-    vsnp3_assmbly.py -f *fasta
+    vsnp3_assembly.py -f *fasta
 
     Output:  pdf report and excel stat summary
 

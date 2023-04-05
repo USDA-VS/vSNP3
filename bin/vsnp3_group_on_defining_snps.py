@@ -76,7 +76,10 @@ class Group():
             defining_snps_dict[abs_pos] = group
         elif defining_snps:
             defining_snps_df = pd.read_excel(defining_snps)  
-            defining_snps_dict = defining_snps_df.iloc[:, 1:].head(n=1).to_dict(orient='records')[0] # drop first "all" column, just keep abs_pos and group, and make into dictionary of key=abs_pos, item=group
+            try:
+                defining_snps_dict = defining_snps_df.iloc[:, 1:].head(n=1).to_dict(orient='records')[0] # drop first "all" column, just keep abs_pos and group, and make into dictionary of key=abs_pos, item=group
+            except IndexError:
+                defining_snps_dict = defining_snps_df.iloc[:, 0:].head(n=1).to_dict(orient='records')[0]
             if not no_filters:
                 filter_all_list = defining_snps_df.iloc[:, 0].to_list()[1:]
                 filter_all_list = [x for x in filter_all_list if str(x) != 'nan']
@@ -165,7 +168,12 @@ class Group():
                             sample = metadata_df.loc[metadata_df['file_name'] == sample, 'metadata'].iloc[0]
                             dataframes_names_updated[sample] = single_df
                         except IndexError:
-                            dataframes_names_updated[sample] = single_df
+                            try: #try stripping off _zc and anything after, for example 99-0100_zc_Val_TS to 99-0100
+                                sample = re.sub('_zc_.*$', '', sample)
+                                sample = metadata_df.loc[metadata_df['file_name'] == sample, 'metadata'].iloc[0]
+                                dataframes_names_updated[sample] = single_df
+                            except IndexError:
+                                dataframes_names_updated[sample] = single_df
             else:
                 dataframes_names_updated[sample] = single_df
             if not no_filters and filter_all_list:
@@ -222,7 +230,8 @@ class Group():
                     if not no_filters: #don't apply filters when option called
                         sample_dict_group_filter={}
                         for sample, each_df in sample_dict.items():
-                            each_df = each_df[~each_df['abs_pos'].isin(self.group_filter_snps_dict[group])] #by group remove positions to filter
+                            expanded_filter_list = self.list_expansion(self.group_filter_snps_dict[group])
+                            each_df = each_df[~each_df['abs_pos'].isin(expanded_filter_list)] #by group remove positions to filter
                             sample_dict_group_filter[sample] = each_df
                         sample_dict = sample_dict_group_filter
                     groupings_dict[group] = sample_dict #defining_snps_dict[abs_pos] provides group
