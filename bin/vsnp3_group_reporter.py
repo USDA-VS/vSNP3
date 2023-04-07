@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.11"
+__version__ = "3.13"
 
 import os
 import sys
@@ -26,11 +26,10 @@ class GroupReporter:
         sheet_names = xl.sheet_names
         ws = pd.read_excel(excel_path, sheet_name=sheet_names[0])
         defining_snps = ws.iloc[0]
-        defsnp_iterator = iter(defining_snps.iteritems())
-        next(defsnp_iterator)
+        defsnp_dict = dict(zip(defining_snps.index, defining_snps.to_numpy()))
         defining_snps={}
         inverted_defining_snps={}
-        for abs_pos, group in defsnp_iterator:
+        for abs_pos, group in defsnp_dict.items():
             if '!' in abs_pos:
                 inverted_defining_snps[abs_pos.replace('!', '')] = group
             else:

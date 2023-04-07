@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.11"
+__version__ = "3.13"
 
 import os
 import sys
@@ -217,7 +217,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
 
     ---------------------------------------------------------
     Conda:
-    conda install vsnp3=3.11 -c conda-forge -c bioconda
+    conda install vsnp3=3.13 -c conda-forge -c bioconda
     ---------------------------------------------------------
 
     When running samples through step1 and 2 of vSNP, or when running a routine analysis, set up dependencies using vsnp3_path_adder.py
