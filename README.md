@@ -1,6 +1,6 @@
 # vSNP3
 
-This is an introduction to vSNP version 3.  A comprehensive overview is [here](https://github.com/USDA-VS/vSNP/blob/master/docs/detailed_usage.md).
+This is an introduction to vSNP version 3.  A comprehensive overview of vSNP version 2 is [here](https://github.com/USDA-VS/vSNP/blob/master/docs/detailed_usage.md) with version 2 GitHub repo [here](https://github.com/USDA-VS/vSNP).
 
 vSNP3 generates BAM, VCF and annotated SNP tables and corresponding phylogenetic trees to achieve a high resolution SNP analysis.
 
@@ -13,7 +13,7 @@ Tested with Python 3.7 - 3.9.
 Anaconda [setup](./docs/instructions/conda_instructions.md)
 
 ```
-conda install vsnp3=3.13 -c conda-forge -c bioconda
+conda install vsnp3=3.14 -c conda-forge -c bioconda
 ```
 
 ## Installation test
