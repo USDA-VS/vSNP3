@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.14"
+__version__ = "3.15"
 
 import os
 
@@ -73,7 +73,6 @@ class Step2_Summary:
             conda list numpy | egrep -v "^#|numpydoc"; \
             conda list pandas | grep -v "^#"; \
             conda list pysam | grep -v "^#"; \
-            conda list pyvcf | grep -v "^#"; \
             conda list raxml | grep -v "^#"').read()
             versions = versions.split('\n')
             for i in versions:

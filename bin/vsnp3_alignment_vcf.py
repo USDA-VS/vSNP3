@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.14"
+__version__ = "3.15"
 
 import os
 import subprocess
@@ -171,7 +171,7 @@ class Alignment(Setup):
                         min_number = chunk
                 print("{}:{}-{}".format(chrom, min_number, total_len), file=chrom_ranges)
             chrom_ranges.close()
-            freebayes_parallel = f'freebayes-parallel chrom_ranges.txt 8 -E -1 -e 1 -u --strict-vcf -f {reference} {nodup_bamfile} > {unfiltered_hapall} 2>/dev/null'
+            freebayes_parallel = f'freebayes-parallel chrom_ranges.txt 8 -E -1 -e 1 -u --strict-vcf -f {reference} {nodup_bamfile} > {unfiltered_hapall}' #2>/dev/null'
             os.system(freebayes_parallel)
             alignment_vcf_run_summary.append(f'SYSTEM CALL: {freebayes_parallel} -- {datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}')
             # os.system(f'bcftools mpileup --threads 8 -Ou -f {reference} {nodup_bamfile} | bcftools call --threads 8 -mv -Ov -o {unfiltered_hapall}')

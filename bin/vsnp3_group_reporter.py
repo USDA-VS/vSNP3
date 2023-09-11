@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 
-__version__ = "3.14"
+__version__ = "3.15"
 
 import os
+import io
 import sys
 import pandas as pd
-import vcf
 import argparse
 import textwrap
 
@@ -37,6 +37,29 @@ class GroupReporter:
         self.defining_snps = defining_snps
         self.inverted_defining_snps = inverted_defining_snps
 
+    def read_vcf(self, path):
+        with open(path, 'r') as f:
+            lines = [l for l in f if not l.startswith('##')]
+        df = pd.read_csv(
+            io.StringIO(''.join(lines)),
+            dtype={'#CHROM': str, 'POS': str, 'ID': str, 'REF': str, 'ALT': str,
+                'QUAL': str, 'FILTER': str, 'INFO': str},
+            sep='\t'
+        ).rename(columns={'#CHROM': 'CHROM'})
+        df['POS'] = pd.to_numeric(df['POS'], errors='coerce').fillna(0).astype(int)
+        df['QUAL'] = pd.to_numeric(df['QUAL'], errors='coerce').fillna(0).astype(int)
+        
+        # Split the INFO column and extract the AC, DP and MQ fields
+        df['AC'] = df['INFO'].apply(lambda x: dict(item.split("=") for item in x.split(";") if "=" in item).get('AC', None))
+        df['DP'] = df['INFO'].apply(lambda x: dict(item.split("=") for item in x.split(";") if "=" in item).get('DP', None))
+        df['MQ'] = df['INFO'].apply(lambda x: dict(item.split("=") for item in x.split(";") if "=" in item).get('MQ', None))
+        df['AC'] = pd.to_numeric(df['AC'], errors='coerce').fillna(0).astype(int)
+        df['DP'] = pd.to_numeric(df['DP'], errors='coerce').fillna(0).astype(int)
+        df['MQ'] = pd.to_numeric(df['MQ'], errors='coerce').fillna(0).astype(int)
+        df = df.drop(columns=['INFO', 'ID', 'FILTER', 'FORMAT'])
+
+        return df
+
     def find_initial_positions(self, filename):
         found_positions = {}
         found_positions_mix = {}
@@ -45,27 +68,20 @@ class GroupReporter:
         qual_threshold = 150
         MQ = 56
         try:
-            vcf_reader = vcf.Reader(open(filename, 'r'))
+            df = self.read_vcf(filename)
             try:
-                for record in vcf_reader:
+                for index, record in df.iterrows():
                     try:
                         record_qual = int(record.QUAL)
                     except TypeError:
                         record_qual = 0 
-                    try:
-                        # Freebayes VCFs place MQ values are placed into a list.  GATK as a float
-                        record.INFO['MQ'] = record.INFO['MQ'][0]
-                    except TypeError:
-                        pass
-                    except KeyError:
-                        pass
                     chrom = record.CHROM
                     position = record.POS
                     absolute_positon = str(chrom) + ":" + str(position)
                     try:
-                        if str(record.ALT[0]) != "None" and record.INFO['AC'][0] == AC and len(record.REF) == 1 and record_qual > qual_threshold and record.INFO['MQ'] > MQ:
+                        if str(record.ALT[0]) != "None" and record.AC == AC and len(record.REF) == 1 and record_qual > qual_threshold and record.MQ > MQ:
                             found_positions.update({absolute_positon: record.REF})
-                        if str(record.ALT[0]) != "None" and record.INFO['AC'][0] == 1 and len(record.REF) == 1 and record_qual > qual_threshold and record.INFO['MQ'] > MQ:
+                        if str(record.ALT[0]) != "None" and record.AC == 1 and len(record.REF) == 1 and record_qual > qual_threshold and record.MQ > MQ:
                             found_positions_mix.update({absolute_positon: record.REF})
                     except KeyError as e:
                         pass

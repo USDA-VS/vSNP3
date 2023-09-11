@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.14"
+__version__ = "3.15"
 
 import os
 import sys
@@ -58,6 +58,7 @@ class Ref_Options():
                 #if the asked for reference is a match grab files
                 self.path = directory
                 self.metadata_gather(directory)
+                continue
             else:
                 reference_header_capture = defaultdict(list) # find reference by fasta headers
                 # for directory in all_ref_options:

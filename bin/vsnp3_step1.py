@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.14"
+__version__ = "3.15"
 
 import os
 import sys
@@ -263,7 +263,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     print(args)
     print("\n")
 
-    program_list = ['Python', 'Bio', 'allel', 'numpy', 'pandas', 'scipy',]
+    program_list = ['Python', 'Bio', 'numpy', 'pandas', 'scipy',]
     python_programs = []
     for name, module in sorted(sys.modules.items()): 
         if hasattr(module, '__version__') and name in program_list: 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.14"
+__version__ = "3.15"
 
 import os
 import subprocess
@@ -221,8 +221,8 @@ class Tables:
                     break
             snp_from_top.append(count)
         row2 = pd.Series(snp_from_top, tree_order.columns, name="snp_from_top")
-        tree_order = tree_order.append([row1])
-        tree_order = tree_order.append([row2])
+        tree_order = pd.concat([tree_order, pd.DataFrame([row1])])
+        tree_order = pd.concat([tree_order, pd.DataFrame([row2])])
         tree_order = tree_order.T
         tree_order = tree_order.sort_values(['snp_from_top', 'snp_per_column'], ascending=[True, False])
         tree_order = tree_order.T
@@ -252,8 +252,8 @@ class Tables:
             val = max((list(g) for _, g in itertools.groupby(index_list_of_ref_differences, lambda x: x-next(c))), key=len)
             snp_from_top.append(val[0]) #starting row number with longest continous SNPs in column
         row2 = pd.Series(snp_from_top, tree_order2.columns, name="snp_from_top")
-        tree_order2 = tree_order2.append([row1])
-        tree_order2 = tree_order2.append([row2])
+        tree_order2 = pd.concat([tree_order2, pd.DataFrame([row1])])
+        tree_order2 = pd.concat([tree_order2, pd.DataFrame([row2])])
         tree_order2 = tree_order2.T
         tree_order2 = tree_order2.sort_values(['snp_from_top', 'snp_per_column'], ascending=[True, False])
         tree_order2 = tree_order2.T
@@ -358,7 +358,7 @@ class Tables:
         formatannotation = wb.add_format({'font_color': '#0A028C', 'rotation': '-90', 'align': 'top'})
         #set last row
         ws.set_row(rows, 400, formatannotation)
-        writer.save()
+        writer.close()
 
 class Hash_Names:
 

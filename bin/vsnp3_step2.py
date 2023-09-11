@@ -1,18 +1,20 @@
 #!/usr/bin/env python
 
-__version__ = "3.14"
+__version__ = "3.15"
 
 import os
 import sys
+import io
 import shutil
 import re
 import pickle
 import argparse
 import textwrap
+import pandas as pd
 import zipfile
 import glob
 from datetime import datetime
-import allel
+
 from collections import defaultdict
 from concurrent import futures
 import multiprocessing
@@ -73,16 +75,39 @@ class VCF_to_DF():
         if not debug:
             os.remove('dictionary_of_dataframes.pickle')
 
+    def read_vcf(self, path):
+        with open(path, 'r') as f:
+            lines = [l for l in f if not l.startswith('##')]
+        df = pd.read_csv(
+            io.StringIO(''.join(lines)),
+            dtype={'#CHROM': str, 'POS': str, 'ID': str, 'REF': str, 'ALT': str,
+                'QUAL': str, 'FILTER': str, 'INFO': str},
+            sep='\t'
+        ).rename(columns={'#CHROM': 'CHROM'})
+        df['POS'] = pd.to_numeric(df['POS'], errors='coerce').fillna(0).astype(int)
+        df['QUAL'] = pd.to_numeric(df['QUAL'], errors='coerce').fillna(0).astype(int)
+        
+        # Split the INFO column and extract the AC, DP and MQ fields
+        df['AC'] = df['INFO'].apply(lambda x: dict(item.split("=") for item in x.split(";") if "=" in item).get('AC', None))
+        df['DP'] = df['INFO'].apply(lambda x: dict(item.split("=") for item in x.split(";") if "=" in item).get('DP', None))
+        df['MQ'] = df['INFO'].apply(lambda x: dict(item.split("=") for item in x.split(";") if "=" in item).get('MQ', None))
+        df['AC'] = pd.to_numeric(df['AC'], errors='coerce').fillna(0).astype(int)
+        df['DP'] = pd.to_numeric(df['DP'], errors='coerce').fillna(0).astype(int)
+        df['MQ'] = pd.to_numeric(df['MQ'], errors='coerce').fillna(0).astype(int)
+        df = df.drop(columns=['INFO', 'ID', 'FILTER', 'FORMAT'])
+
+        return df
+
     def check_and_fix(self, vcf):
         vcf_bad_list_temp = []
         try:
             self.vcf_fix(vcf)
-            df = allel.vcf_to_dataframe(vcf, fields=['variants/CHROM', 'variants/POS', 'variants/QUAL', 'variants/REF', 'variants/ALT', 'variants/AC', 'variants/DP', 'variants/MQ'], alt_number=1)
+            df = self.read_vcf(vcf)
             df['abs_pos'] = df['CHROM'] + ':' + df['POS'].astype(str)
         except RuntimeError:
             self.vcf_fix(vcf)
             try:
-                df = allel.vcf_to_dataframe(vcf, fields=['variants/CHROM', 'variants/POS', 'variants/QUAL', 'variants/REF', 'variants/ALT', 'variants/AC', 'variants/DP', 'variants/MQ'], alt_number=1)
+                df = self.read_vcf(vcf)
                 df['abs_pos'] = df['CHROM'] + ':' + df['POS'].astype(str)
             except:
                 vcf_bad_list_temp.append(vcf)
@@ -209,7 +234,7 @@ class HTML_Summary():
             print("\n<h2>Program versions:</h2>", file=htmlfile)
             print(f'vSNP3: {__version__}', file=htmlfile)
             print(f'Python: {sys.version} <br>', file=htmlfile)
-            program_list = ['Python', 'Bio', 'allel', 'numpy', 'pandas', 'scipy',]
+            program_list = ['Python', 'Bio', 'numpy', 'pandas', 'scipy',]
             for name, module in sorted(sys.modules.items()): 
                 if hasattr(module, '__version__') and name in program_list: 
                     print(f'{name}, {module.__version__} <br>', file=htmlfile)
