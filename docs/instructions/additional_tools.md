@@ -80,6 +80,8 @@ Choose the prebuild binary for your environment, download and unzip.
 
 Place unzipped file in desired location (${HOME} will work)
 
+Add to PATH, `PATH="${HOME}/kSNP4/kSNP4.1pkg":$PATH`
+
 Change directory to location of FASTA files
 
 ```
