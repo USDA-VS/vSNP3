@@ -110,7 +110,7 @@ conda activate kraken
 conda install kraken2 krona krakentools sra-tools=2.11.0 pandas pigz -c conda-forge -c bioconda 
 ```
 
-This asking to do additional setup for these programs.
+After the conda install it will provide additional setup instructions for these programs.
 
 [Download](https://benlangmead.github.io/aws-indexes/k2) Kraken database.
 
