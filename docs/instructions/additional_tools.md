@@ -44,20 +44,14 @@ Building Mashtree, kSNP and Kraken in their own conda environments ensures insta
 
 # Mashtree
 
-New conda environment
+Create conda environment
 
 ```
-conda create --name mashtree
+conda install mashtree -c conda-forge -n mashtree -c bioconda 
 ```
-
 ```
 conda activate mashtree
 ```
-
-```
-conda install mashtree -c conda-forge -c bioconda 
-```
-
 Change to directory with test files
 
 ```
@@ -96,18 +90,13 @@ kSNP4 -in myInfile -outdir run -CPU 8 -k 21 -core -ML -min_frac 0.8
 
 # Kraken/Krona
 
-Make new conda environment
+Create conda environment
 
 ```
-conda create --name kraken
+conda install kraken2 krona krakentools sra-tools=2.11.0 wget pandas pigz -c conda-forge -c bioconda -n kraken
 ```
-
 ```
 conda activate kraken
-```
-
-```
-conda install kraken2 krona krakentools sra-tools=2.11.0 wget pandas pigz -c conda-forge -c bioconda 
 ```
 
 After the conda install it will provide additional setup instructions for these programs.
