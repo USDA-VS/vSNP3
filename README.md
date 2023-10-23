@@ -118,11 +118,7 @@ See `-h` option for detail and usage
 - vsnp3_filter_finder.py
 - vsnp3_spoligotype.py
  
-## Input Summary
-
-<!-- <img src="../dependencies/vsnp_inputs.png" alt="vSNP inputs" width="500"> -->
-![vSNP inputs](docs/img/vsnp_inputs.png "vSNP inputs")
-## Map
+## Package summary
 
 <!-- ![vSNP script usage](../dependencies/vsnp3_structure.jpg "Script structure") -->
 ![Script structure](docs/img/vsnp3_structure.png "Script structure")
