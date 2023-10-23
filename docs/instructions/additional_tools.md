@@ -107,7 +107,7 @@ conda activate kraken
 ```
 
 ```
-conda install kraken2 krona krakentools sra-tools=2.11.0 pandas pigz -c conda-forge -c bioconda 
+conda install kraken2 krona krakentools wget pandas pigz -c conda-forge -c bioconda 
 ```
 
 After the conda install it will provide additional setup instructions for these programs.
