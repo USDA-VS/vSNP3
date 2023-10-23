@@ -72,28 +72,24 @@ mashtree --sketch-size 1000000 --numcpus 4 *.fasta > mashtree.tre
 
 # kSNP
 
-Only works from Linux environment (WSL works), conda builds for Macs unavailable.
+As of late 2023 kSNP needs to be download from [sourceforge](https://sourceforge.net/projects/ksnp/files/).
 
-New conda environment
+There is a new version of kSNP as of 2023, kSNP4.1.
 
-```
-conda create --name ksnp
-```
+Choose the prebuild binary for your environment, download and unzip.
 
-```
-conda activate ksnp
-```
+Place unzipped file in desired location (${HOME} will work)
+
+Change directory to location of FASTA files
 
 ```
-conda install -c hcc -c conda-forge -c bioconda ksnp fasttree
+MakeKSNP4infile -indir ./ -outfile myInfile S
 ```
-Build tree from FASTAs.  If Mashtree was ran on this directory update so directory only contains FASTAs.
 ```
-cd ~/tree_test
+Kchooser4 -in myInfile
 ```
-Just an Example.  Supply your specific path to wrapper.
 ```
-~/vsnp3/bin/vsnp3_ksnp3_wrapper.sh
+kSNP4 -in myInfile -outdir run -CPU 8 -k 21 -core -ML -min_frac 0.8
 ```
 
 # Kraken/Krona
