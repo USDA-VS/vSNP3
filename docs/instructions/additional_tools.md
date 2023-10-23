@@ -122,7 +122,7 @@ cd ~; wget https://genome-idx.s3.amazonaws.com/kraken/k2_standard_08gb_20220607.
 mkdir k2_standard_08gb; tar -xzf k2_standard_08gb_20220607.tar.gz -C k2_standard_08gb
 ```
 
-After installation of Kraken and Krona the following message is shown.
+Link database to conda environment and download taxonomy.
 
 ```
 rm -rf ${HOME}/anaconda3/envs/kraken/opt/krona/taxonomy
