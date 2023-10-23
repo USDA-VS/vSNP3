@@ -125,22 +125,8 @@ mkdir k2_standard_08gb; tar -xzf k2_standard_08gb_20220607.tar.gz -C k2_standard
 After installation of Kraken and Krona the following message is shown.
 
 ```
-Krona installed.  You still need to manually update the taxonomy
-databases before Krona can generate taxonomic reports.  The update
-script is ktUpdateTaxonomy.sh.  The default location for storing
-taxonomic databases is /Users/tstuber/opt/anaconda3/envs/more/opt/krona/taxonomy
-
-If you would like the taxonomic data stored elsewhere, simply replace
-this directory with a symlink.  For example:
-
-rm -rf /Users/tstuber/opt/anaconda3/envs/more/opt/krona/taxonomy
-mkdir /path/on/big/disk/taxonomy
-ln -s /path/on/big/disk/taxonomy /Users/tstuber/opt/anaconda3/envs/more/opt/krona/taxonomy
-ktUpdateTaxonomy.sh
-```
-The default location should work unless disk space is an issue
-
-```
+rm -rf ${HOME}/anaconda3/envs/kraken/opt/krona/taxonomy
+ln -s ${HOME}/k2_standard_08gb ${HOME}/anaconda3/envs/kraken/opt/krona/taxonomy
 ktUpdateTaxonomy.sh
 ```
 
