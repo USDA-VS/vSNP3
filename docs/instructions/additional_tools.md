@@ -93,7 +93,7 @@ kSNP4 -in myInfile -outdir run -CPU 8 -k 21 -core -ML -min_frac 0.8
 Create conda environment
 
 ```
-conda install kraken2 krona krakentools sra-tools=2.11.0 wget pandas pigz -c conda-forge -c bioconda -n kraken
+conda create kraken2 krona krakentools sra-tools=2.11.0 wget pandas pigz -c conda-forge -c bioconda -n kraken
 ```
 ```
 conda activate kraken
