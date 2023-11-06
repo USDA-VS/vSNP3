@@ -8,12 +8,12 @@ Whole genome sequencing for disease tracing and outbreak investigations is routi
 
 ## Conda installation
 
-Tested with Python 3.7 - 3.10.
+Tested with Python 3.8 - 3.9.
 
 Anaconda [setup](./docs/instructions/conda_instructions.md)
 
 ```
-conda create -n vsnp3 -c conda-forge -c bioconda -y vsnp3=3.14
+conda create -c conda-forge -c bioconda -n vsnp3 vsnp3=3.17 
 ```
 
 ## Installation test
@@ -81,7 +81,7 @@ Test step 2:
 cd ~/vsnp3_test_dataset/NC_045512_test_files/step2
 ```
 ```
-vsnp3_step2.py -a -t NC_045512_wuhan-hu-1
+vsnp3_step2.py -a -t NC_045512_wuhan-hu-1 -remove
 ```
 
 ## Description
@@ -118,7 +118,11 @@ See `-h` option for detail and usage
 - vsnp3_filter_finder.py
 - vsnp3_spoligotype.py
  
-## Package summary
+## Input Summary
+
+<!-- <img src="../dependencies/vsnp_inputs.png" alt="vSNP inputs" width="500"> -->
+![vSNP inputs](docs/img/vsnp_inputs.png "vSNP inputs")
+## Map
 
 <!-- ![vSNP script usage](../dependencies/vsnp3_structure.jpg "Script structure") -->
 ![Script structure](docs/img/vsnp3_structure.png "Script structure")
