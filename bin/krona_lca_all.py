@@ -6,6 +6,10 @@ import pandas as pd
 import argparse
 import textwrap
 
+import locale
+# Set the locale to United States
+locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
+
 def force_tax_number(kraken_output):
     df = pd.read_csv(kraken_output, sep='\t', header=None)
     target_rows = df[(df[2] == 0) & (df[0] == 'C')]

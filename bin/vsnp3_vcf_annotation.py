@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.16"
+__version__ = "3.17"
 
 import os
 import re
@@ -9,6 +9,10 @@ import textwrap
 import pandas as pd
 
 from vsnp3_annotation import Annotation
+
+import locale
+# Set the locale to United States
+locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
 
 class VCF_Annotation():
     ''' 

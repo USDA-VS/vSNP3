@@ -1,12 +1,16 @@
 #!/usr/bin/env python
 
-__version__ = "3.16"
+__version__ = "3.17"
 
 import os
 import re
 import pandas as pd
 import argparse
 import textwrap
+
+import locale
+# Set the locale to United States
+locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
 
 parser = argparse.ArgumentParser(prog='PROG', formatter_class=argparse.RawDescriptionHelpFormatter, description=textwrap.dedent('''\
 

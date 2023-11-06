@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.16"
+__version__ = "3.17"
 
 import os
 import subprocess
@@ -19,6 +19,9 @@ import textwrap
 import itertools
 from Bio import SeqIO
 
+import locale
+# Set the locale to United States
+locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
 
 class Tree:
     ''' 
@@ -277,7 +280,8 @@ class Tables:
             df_temp = df_temp.set_index('abs_pos')
             df = df_temp.T
         else:
-            df = df.append(pd.Series(name='no annotations'))
+            # df = df.append(pd.Series(name='no annotations'))
+            df = pd.concat([df, pd.Series(name='no annotations').to_frame().T])
         max_size=10000 #max columns allowed in tables
         count=0
         chunk_start=0

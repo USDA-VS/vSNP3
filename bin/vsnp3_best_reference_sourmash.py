@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.16"
+__version__ = "3.17"
 
 import os
 import subprocess
@@ -15,6 +15,10 @@ from vsnp3_file_setup import Setup
 from vsnp3_file_setup import Banner
 from vsnp3_file_setup import Latex_Report
 from vsnp3_file_setup import Excel_Stats
+
+import locale
+# Set the locale to United States
+locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
 
 class Best_Reference(Setup):
     ''' 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.16"
+__version__ = "3.17"
 
 import os
 import sys
@@ -27,6 +27,10 @@ from vsnp3_file_setup import Setup
 from vsnp3_group_on_defining_snps import Group
 from vsnp3_reference_options import Ref_Options
 from vsnp3_remove_from_analysis import Remove_From_Analysis
+
+import locale
+# Set the locale to United States
+locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
 
 global_date_stamp=None
 global_working_dir='.'

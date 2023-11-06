@@ -5,6 +5,10 @@ import pandas as pd
 import time
 from datetime import datetime
 
+import locale
+# Set the locale to United States
+locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
+
 '''
 working directory to contain Excel files to simply merge based on header to a single file
 '''

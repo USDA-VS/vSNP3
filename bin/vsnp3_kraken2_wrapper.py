@@ -14,6 +14,10 @@ multiprocessing.set_start_method('spawn', True)
 
 from krona_lca_all import force_tax_number
 
+import locale
+# Set the locale to United States
+locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
+
 class Kraken2_Identification:
     ''' 
     Assemble reads using Spades assembler.

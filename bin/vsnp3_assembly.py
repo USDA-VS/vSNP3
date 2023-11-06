@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.16"
+__version__ = "3.17"
 
 import os
 import sys
@@ -19,6 +19,10 @@ from vsnp3_file_setup import Latex_Report
 from vsnp3_file_setup import Excel_Stats
 
 from vsnp3_fastq_stats_seqkit import FASTQ_Stats
+
+import locale
+# Set the locale to United States
+locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
 
 class Assemble(Setup):
     ''' 

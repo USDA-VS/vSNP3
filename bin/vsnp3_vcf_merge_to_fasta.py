@@ -15,6 +15,10 @@ from Bio.SeqRecord import SeqRecord
 
 from vsnp3_file_setup import Setup
 
+import locale
+# Set the locale to United States
+locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
+
 class Merge_VCF(Setup):
     ''' 
     '''
