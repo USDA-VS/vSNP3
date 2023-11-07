@@ -26,9 +26,6 @@ from vsnp3_fasta_to_snps_table import Tree
 from vsnp3_fasta_to_snps_table import Tables
 from vsnp3_annotation import Annotation
 
-import locale
-# Set the locale to United States
-locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
 
 class bcolors:
     PURPLE = '\033[95m'

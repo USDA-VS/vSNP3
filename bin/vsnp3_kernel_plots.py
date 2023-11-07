@@ -11,9 +11,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-import locale
-# Set the locale to United States
-locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
 
 class Kernel_Plot():
     def __init__(self, FASTA=None, sample_name=None, xlim_low=None, xlim_high=None, bin_max=None, bin_increment=None, color=None, histogram=False, debug=False):

@@ -11,9 +11,6 @@ import textwrap
 
 from vsnp3_reference_options import Ref_Options
 
-import locale
-# Set the locale to United States
-locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
 
 class GroupReporter:
 

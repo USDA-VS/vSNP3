@@ -23,9 +23,6 @@ from vsnp3_file_setup import Banner
 from vsnp3_file_setup import Latex_Report
 from vsnp3_file_setup import Excel_Stats
 
-import locale
-# Set the locale to United States
-locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
 
 class Spoligo(Setup):
 

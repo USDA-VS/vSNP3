@@ -22,9 +22,6 @@ from vsnp3_alignment_vcf import Alignment
 from vsnp3_spoligotype import Spoligo
 from vsnp3_group_reporter import GroupReporter
 
-import locale
-# Set the locale to United States
-locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
 
 class vSNP3_Step1(Setup):
     ''' 

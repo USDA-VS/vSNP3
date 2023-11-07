@@ -10,9 +10,6 @@ import argparse
 import textwrap
 from collections import defaultdict
 
-import locale
-# Set the locale to United States
-locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
 
 class Ref_Options():
     '''

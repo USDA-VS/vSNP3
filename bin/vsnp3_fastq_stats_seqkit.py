@@ -18,9 +18,6 @@ from vsnp3_file_setup import Banner
 from vsnp3_file_setup import Latex_Report
 from vsnp3_file_setup import Excel_Stats
 
-import locale
-# Set the locale to United States
-locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
 
 class FASTQ_Container:
     #Provide nested dot notation to object for each read with stats, fq.read1.fastq --> 'sample_S25_L001_R1.fastq.gz'

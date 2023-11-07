@@ -3,9 +3,6 @@
 __version__ = "3.17"
 
 import os
-import locale
-# Set the locale to United States
-locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
 
 class Step2_Summary:
 

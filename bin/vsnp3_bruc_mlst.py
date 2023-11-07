@@ -12,9 +12,6 @@ from collections import OrderedDict
 import argparse
 import textwrap
 
-import locale
-# Set the locale to United States
-locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
 
 class Bruc_MLST:
 

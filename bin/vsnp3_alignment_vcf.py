@@ -22,10 +22,6 @@ from vsnp3_vcf_annotation import VCF_Annotation
 from vsnp3_assembly import Assemble
 from vsnp3_zero_coverage import Zero_Coverage
 
-import locale
-# Set the locale to United States
-locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
-
 
 class Alignment(Setup):
     ''' 
