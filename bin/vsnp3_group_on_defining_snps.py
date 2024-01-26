@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.18"
+__version__ = "3.19"
 
 import os
 import sys
@@ -443,7 +443,8 @@ class Group():
             #https://stackoverflow.com/questions/27673231/why-should-i-make-a-copy-of-a-data-frame-in-pandas
             sample_df_parse_test = sample_df.copy() # to use below            
             sample_df.loc[sample_df['ALT'].str.len() > 1, 'ALT'] = 'N'
-            sample_df.loc[sample_df['ALT'] == 'N', 'AC'] = 2 # allow the above line to pass ambigious if needed        
+            sample_df.loc[sample_df['ALT'] == 'N', 'AC'] = 2 # allow the above line to pass ambigious if needed
+            sample_df['ALT'] = sample_df['ALT'].replace('.', '-')        
             try: #change AC=1 to ambigious
                 for index, row in sample_df.loc[sample_df['AC'] == 1].iterrows():
                     sample_df.at[index, 'ALT'] = self.ambigious_lookup[row['REF'] + row['ALT']]
@@ -455,13 +456,14 @@ class Group():
             # < 50 will default to REF... change ALT to REF
             try:
                 sample_df.loc[sample_df['REF'].str.len() > 1, 'REF'] = 'N' #if REF call is indel change to N to maintain equal sequence length for all samples
-                sample_df.loc[sample_df['QUAL'] < self.n_threshold, 'ALT'] = sample_df['REF']
+                mask = (sample_df['QUAL'] < self.n_threshold) & (sample_df['ALT'] != '-')
+                sample_df.loc[mask, 'ALT'] = sample_df['REF']
             except (ValueError) as e:
                 if self.debug:
                     print(print(f'\n\t#####\n\t##### {e}, Sample: {sample}\n\t#####\n'))
 
             sample_df = sample_df[['abs_pos', 'ALT']] # no longer need other columns
-            sample_df = sample_df.replace(np.nan, '-', regex=True) # change zero coverage to -
+            # sample_df = sample_df.replace(np.nan, '-', regex=True) # change zero coverage to -
             df_merged = sample_df.merge(df_ref, left_on='abs_pos', right_on='abs_pos', how='outer') # finish normalizing if df doesn't include all position in group
             df_merged['ALT'] = np.where(df_merged['ALT'].notna(), df_merged['ALT'], df_merged['REF']) # merge REF from df_ref to ALT column
             df_merged['ALT'] = df_merged['ALT'].fillna('-')
@@ -472,6 +474,7 @@ class Group():
             
             ####
             #Do not include low quality calls when determining if position is parsimonious.  Only include calls with QUAL >= qual_threshold [150]
+            sample_df_parse_test['ALT'] = sample_df_parse_test['ALT'].replace('.', '-')
             try:
                 sample_df_parse_test.loc[sample_df_parse_test['REF'].str.len() > 1, 'REF'] = 'N' #if REF call is indel change to N to maintain equal sequence length for all samples
                 sample_df_parse_test.loc[sample_df_parse_test['QUAL'] < self.qual_threshold, 'ALT'] = sample_df_parse_test['ALT'] # change n_threshold from above to qual threshold skipping the Ns when determining if position is parsimonious AND changed to 'ALT'.  So, if there are just a few low quality represented the SNP position will be seen as parisomonious uninformative and removed.
@@ -479,7 +482,7 @@ class Group():
                 if self.debug:
                     print(print(f'\n\t#####\n\t##### {e}, Sample: {sample}\n\t#####\n'))
             sample_df_parse_test = sample_df_parse_test[['abs_pos', 'ALT']] # no longer need other columns
-            sample_df_parse_test = sample_df_parse_test.replace(np.nan, '-', regex=True) # change zero coverage to -
+            # sample_df_parse_test = sample_df_parse_test.replace(np.nan, '-', regex=True) # change zero coverage to -
             df_merged_parse_test = sample_df_parse_test.merge(df_ref, left_on='abs_pos', right_on='abs_pos', how='outer') # finish normalizing if df doesn't include all position in group
             df_merged_parse_test['ALT'] = np.where(df_merged_parse_test['ALT'].notna(), df_merged_parse_test['ALT'], df_merged_parse_test['REF']) # merge REF from df_ref to ALT column
             df_merged_parse_test['ALT'] = df_merged_parse_test['ALT'].fillna('-')

@@ -1,14 +1,16 @@
 #!/usr/bin/env python
 
-__version__ = "3.18"
+__version__ = "3.19"
 
 import os
 import shutil
 import sys
 import argparse
 import textwrap
+from Bio.Seq import Seq
 from Bio import SeqIO
 from collections import ChainMap
+from Bio.SeqFeature import FeatureLocation, CompoundLocation
 
 
 class Annotation():
@@ -71,12 +73,14 @@ class Annotation():
         aa_residue_pos = ""
         self.aa_pos = "n/a"
         self.feature_found = False
+        self.direction = "n/a"
         try:
             for feature in self.gbk_dict[chrom].features:
                 if "CDS" == feature.type or "tRNA" == feature.type or "rRNA" == feature.type or "repeat_region" == feature.type or "mobile_element" == feature.type or "ncRNA" == feature.type:
                     for part in feature.location.parts:
                         if position in range(part.start, part.end):
                             self.feature_found = True
+                            self.direction = "forward gene"
                             self.cds_nt_start = part.start
                             self.cds_nt_end = part.end
                             aa_location = (position - feature.location.start) / 3
@@ -96,35 +100,41 @@ class Annotation():
                                     except KeyError:
                                         self.product = f'{feature.type}, product_unknown'
                             if nt_in_aa == '0':
-                                aa_residue_pos = int(aa_residue)
                                 nt_index_aa = 2 #set index
                                 right = position
                                 left = position - 3
                                 self.aa_pos = 3
                             elif nt_in_aa[0] == '3':
                                 nt_index_aa = 0 #set index
-                                aa_residue_pos = int(aa_residue) + 1
                                 right = position + 2
                                 left = position - 1
                                 self.aa_pos = 1
                             elif nt_in_aa[0] == '6':
                                 nt_index_aa = 1 #set index
-                                aa_residue_pos = int(aa_residue) + 1
                                 right = position + 1
                                 left = position - 2
                                 self.aa_pos = 2
                             else:
                                 #error out without exception to quit
                                 right = ''
-                            zero_index_residue = aa_residue_pos - 1
-                            self.aa_residue_pos = aa_residue_pos
-                            try:
-                                self.ref_aa = feature.qualifiers["translation"][0][zero_index_residue]
-                            except (IndexError, KeyError) as e:
-                                self.ref_aa = "unfound_ref_AA"
+                            self.aa_residue_pos = int((left - part.start) / 3)
+                            if part.strand == -1: # Reverse complement
+                                self.aa_residue_pos = int((part.end - left) / 3)
                             rbc = self.gbk_dict[chrom].seq[left:right]
+                            if part.strand == -1: # Reverse complement
+                                rbc = rbc.reverse_complement()
+                                nucleotide_seq = Seq(snp_nt)
+                                snp_nt = str(nucleotide_seq.reverse_complement())
+                                self.direction = "reverse gene"
+                                block = True
+                                if nt_index_aa == 0:
+                                    nt_index_aa = 2
+                                    block = False
+                                elif nt_index_aa == 2 and block == True:
+                                    nt_index_aa = 0
                             rbc_list = list(rbc)
                             self.reference_base_code = "".join(rbc_list)
+                            self.ref_aa = self.aa_code[self.reference_base_code]
                             #change rbc_list to represent SNP
                             rbc_list[nt_index_aa] = snp_nt
                             # Example snp_dictionary: SNP at abs pos, {'NC_017250.1:264518': 'T', ...}
@@ -197,5 +207,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     print(f'ref_aa: {annotation.ref_aa}')
     print(f'snp_aa: {annotation.snp_aa}')
     print(f'mutation_type: {annotation.mutation_type}')
+    print(f'Gene direction: {annotation.direction}')
+    print(f'{annotation.ref_aa}{annotation.aa_residue_pos}{annotation.snp_aa}')
 
 # Created 2021 by Tod Stuber
