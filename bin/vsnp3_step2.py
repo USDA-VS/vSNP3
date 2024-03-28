@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.19"
+__version__ = "3.20"
 
 import os
 import sys
@@ -147,6 +147,7 @@ class VCF_to_DF():
                         line = ''.join(line[0])
                     if not line.startswith('##'):
                         line = re.sub('"', '', line)
+                        line = re.sub(r" +", "\t", line)
                         line = line.split('\t')
                         line = "\t".join(line[0:10])
                         print(line, file=write_out)

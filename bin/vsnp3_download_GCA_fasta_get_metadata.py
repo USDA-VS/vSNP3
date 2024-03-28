@@ -13,12 +13,7 @@ from zipfile import ZipFile
 import pandas as pd
 import argparse
 import textwrap
-
-from usda_file_setup import Setup
-from usda_file_setup import bcolors
-from usda_file_setup import Banner
-from usda_file_setup import Latex_Report
-from usda_file_setup import Excel_Stats
+from datetime import datetime
 
 
 class Downloader():
@@ -136,6 +131,21 @@ class Downloader():
         excel_dict['sample'] = f'{self.gca_accession}'
         excel_dict['metadata'] = f'{self.acc}_{self.species}_{self.strain}'
         pass
+class Excel_Stats:
+
+    def __init__(self, sample_name):
+        self.sample_name = sample_name
+        date_stamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        self.excel_filename = f'{sample_name}_{date_stamp}_stats.xlsx'
+        excel_dict = {}
+        excel_dict['sample'] = sample_name
+        excel_dict['date'] = date_stamp
+        self.excel_dict = excel_dict 
+
+    def post_excel(self,):
+        df = pd.DataFrame.from_dict(self.excel_dict, orient='index').T
+        df = df.set_index('sample')
+        df.to_excel(self.excel_filename)
 		
 if __name__ == "__main__": # execute if directly access by the interpreter
     parser = argparse.ArgumentParser(prog='PROG', formatter_class=argparse.RawDescriptionHelpFormatter, description=textwrap.dedent('''\

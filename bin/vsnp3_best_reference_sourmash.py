@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.19"
+__version__ = "3.20"
 
 import os
 import subprocess
@@ -122,11 +122,11 @@ class Best_Reference(Setup):
         print(r'\end{table}', file=tex)
 
     def excel(self, excel_dict):
-        count=0
-        for row in self.sourmash_df.itertuples():
-            count+=1
-            if count <= 1:
-                excel_dict[f'Sourmash Sequence Similarity'] = f'{row[1]:.1%}:{row[2]}'
+        # count=0
+        # for row in self.sourmash_df.itertuples():
+        #     count+=1
+        #     if count <= 1:
+        #         excel_dict[f'Sourmash Sequence Similarity'] = f'{row[1]:.1%}:{row[2]}'
         excel_dict[f'Found_Reference_Set'] = f'{self.reference_set}'
 
 

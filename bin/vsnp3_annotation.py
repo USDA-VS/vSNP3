@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.19"
+__version__ = "3.20"
 
 import os
 import shutil
@@ -134,7 +134,10 @@ class Annotation():
                                     nt_index_aa = 0
                             rbc_list = list(rbc)
                             self.reference_base_code = "".join(rbc_list)
-                            self.ref_aa = self.aa_code[self.reference_base_code]
+                            try:
+                                self.ref_aa = self.aa_code[self.reference_base_code]
+                            except KeyError:
+                                self.ref_aa = 'unfound_ref_AA'
                             #change rbc_list to represent SNP
                             rbc_list[nt_index_aa] = snp_nt
                             # Example snp_dictionary: SNP at abs pos, {'NC_017250.1:264518': 'T', ...}
