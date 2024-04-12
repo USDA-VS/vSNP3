@@ -81,7 +81,7 @@ Test step 2:
 cd ~/vsnp3_test_dataset/NC_045512_test_files/step2
 ```
 ```
-vsnp3_step2.py -a -t NC_045512_wuhan-hu-1 -remove
+vsnp3_step2.py -a -t NC_045512_wuhan-hu-1
 ```
 
 ## Description
