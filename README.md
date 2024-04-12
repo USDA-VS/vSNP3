@@ -118,6 +118,8 @@ See `-h` option for detail and usage
 - vsnp3_filter_finder.py
 - vsnp3_spoligotype.py
 
+[Additional Tools](./docs/instructions/additional_tools.md)
+
 ## Version Enhancements
 
 - Python 3.9 support.
@@ -145,5 +147,3 @@ See `-h` option for detail and usage
 - Detailed steps recorded in run_log.txt.
 - Spoligotype for TB complex isolates not found by default.  -s option required with step 1 or find using vsnp3_spoligotype.py.
 - Brucella MLST removed from step 1.  Find Brucella MLST using vsnp3_bruc_mlst.py.
-
-[Additional Tools](./docs/instructions/additional_tools.md)
