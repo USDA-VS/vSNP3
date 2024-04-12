@@ -100,12 +100,14 @@ After the conda install it will provide additional setup instructions for these 
 
 [Download](https://benlangmead.github.io/aws-indexes/k2) Kraken database.
 
-There are many Databases to choose from.  If unsure and download speeds allow try the standard database.  If a smaller database is necessary Standard-8 may be a good option.
+There are many Databases to choose from.  If unsure and download speeds allow try the standard database.  If a smaller database is necessary Standard-8 may be a good option.  Look at site for exact database naming.
+
+Example download
 ```
-cd ~; wget https://genome-idx.s3.amazonaws.com/kraken/k2_standard_08gb_20220607.tar.gz
+cd ~; wget https://genome-idx.s3.amazonaws.com/kraken/k2_standard_08gb_20240112.tar.gz
 ```
 ```
-mkdir k2_standard_08gb; tar -xzf k2_standard_08gb_20220607.tar.gz -C k2_standard_08gb
+mkdir k2_standard_08gb; tar -xzf k2_standard_08gb_*.tar.gz -C k2_standard_08gb
 ```
 
 If needed link database to conda environment and download taxonomy.
