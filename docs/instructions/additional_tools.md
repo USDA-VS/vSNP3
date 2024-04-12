@@ -47,7 +47,7 @@ Building Mashtree, kSNP and Kraken in their own conda environments ensures insta
 Create conda environment
 
 ```
-conda install mashtree -c conda-forge -n mashtree -c bioconda 
+conda create -n mashtree -c conda-forge -c bioconda mashtree
 ```
 ```
 conda activate mashtree
