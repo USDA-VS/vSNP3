@@ -93,10 +93,7 @@ kSNP4 -in myInfile -outdir run -CPU 8 -k 21 -core -ML -min_frac 0.8
 Create conda environment
 
 ```
-conda create kraken2 krona krakentools sra-tools=2.11.0 wget pandas pigz -c conda-forge -c bioconda -n kraken
-```
-```
-conda activate kraken
+conda create -n kraken -c conda-forge -c bioconda kraken2 krona krakentools wget pandas pigz
 ```
 
 After the conda install it will provide additional setup instructions for these programs.
@@ -111,7 +108,7 @@ cd ~; wget https://genome-idx.s3.amazonaws.com/kraken/k2_standard_08gb_20220607.
 mkdir k2_standard_08gb; tar -xzf k2_standard_08gb_20220607.tar.gz -C k2_standard_08gb
 ```
 
-Link database to conda environment and download taxonomy.
+If needed link database to conda environment and download taxonomy.
 
 ```
 rm -rf ${HOME}/anaconda3/envs/kraken/opt/krona/taxonomy
@@ -119,21 +116,36 @@ ln -s ${HOME}/k2_standard_08gb ${HOME}/anaconda3/envs/kraken/opt/krona/taxonomy
 ktUpdateTaxonomy.sh
 ```
 
-## FASTQ for Kraken Testing
+Just an Example.  Supply your specific path to wrapper.
+```
+~/anaconda3/envs/vsnp3/bin/vsnp3_kraken2_wrapper.py -r1 SRR6046640_R1.fastq.gz -r2 SRR6046640_R2.fastq.gz --database ~/k2_standard_08gb
+```
 
+## SRA Tools
 ```
-cd; mkdir kraken_test; cd kraken_test
+conda create -n sra-tools -c conda-forge -c bioconda -n sra-tools
 ```
 ```
-wget https://sra-pub-run-odp.s3.amazonaws.com/sra/SRR6046640/SRR6046640 #fortuitum
+fasterq-dump --split-files -O . SRR26282520
+```
+```
+wget https://sra-pub-run-odp.s3.amazonaws.com/sra/SRR6046640/SRR6046640 
 ```
 ```
 fastq-dump --split-files SRR6046640
 ```
+### macOS
 ```
-rm SRR6046640; mv SRR6046640_1.fastq SRR6046640_R1.fastq; mv SRR6046640_2.fastq SRR6046640_R2.fastq; pigz *fastq
+~/sratoolkit.3.0.7-mac64/bin/fasterq-dump -S SRR6046640
 ```
-Just an Example.  Supply your specific path to wrapper.
+### Docker
+Download Docker.  It must be running.
 ```
-~/vsnp3/bin/vsnp3_kraken2_wrapper.py -r1 SRR6046640_R1.fastq.gz -r2 SRR6046640_R2.fastq.gz --database ~/k2_standard_08gb
+docker pull ncbi/sra-tools
+docker run -t --rm -v $PWD:/output:rw -w /output ncbi/sra-tools fasterq-dump -e 2 -p SRR6046640
+```
+### Singularity
+```
+singularity pull docker://ncbi/sra-tools
+singularity run sra-tools_latest.sif fasterq-dump -e 2 -p SRR6046640
 ```
