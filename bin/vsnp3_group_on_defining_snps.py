@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.20"
+__version__ = "3.21"
 
 import os
 import sys
@@ -377,11 +377,13 @@ class Group():
     def group_selection(self, abs_pos):
         sample_dict={}
         group_found = False
+        abs_pos = abs_pos.split(", ")
         for sample, single_df in self.dataframe_essentials.items():
-            if any(single_df['abs_pos'] == abs_pos):
+            if set(abs_pos).issubset(single_df['abs_pos']): # all positions must be in dataframe column
                 group_found = True
                 sample_dict[sample] = self.dataframe_essentials[sample]
-            elif "!" in abs_pos:
+            elif "!" in ''.join(abs_pos):
+                abs_pos = ''.join(abs_pos) # if inverted positions are used there should only be one position in the abs_pos list so it is being reverted back.
                 abs_pos_inverted = re.sub('!', '', abs_pos)
                 if not any(single_df['abs_pos'] == abs_pos_inverted):
                     group_found = True
@@ -452,7 +454,7 @@ class Group():
                 if self.debug:
                     print(f'\n\t#####\n\t##### {e}, Sample: {sample}\n\t#####\n')
             #change alt to N if QUAL 50 - 150
-            sample_df.loc[(sample_df['QUAL'] >= self.n_threshold) & (sample_df['QUAL'] < self.qual_threshold), 'ALT'] = 'N' # this will overwrite ambigious calls
+            sample_df.loc[(sample_df['QUAL'] >= self.n_threshold) & (sample_df['QUAL'] < self.qual_threshold) & (sample_df['ALT'] != '-'), 'ALT'] = 'N' # this will overwrite ambigious calls
             # < 50 will default to REF... change ALT to REF
             try:
                 sample_df.loc[sample_df['REF'].str.len() > 1, 'REF'] = 'N' #if REF call is indel change to N to maintain equal sequence length for all samples

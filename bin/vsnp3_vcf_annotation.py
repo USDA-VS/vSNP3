@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.20"
+__version__ = "3.21"
 
 import os
 import re

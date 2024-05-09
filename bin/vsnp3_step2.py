@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.20"
+__version__ = "3.21"
 
 import os
 import sys
@@ -294,7 +294,8 @@ if __name__ == "__main__": # execute if directly access by the interpreter
 
     '''), epilog='''---------------------------------------------------------''')
 
-    parser.add_argument('-wd', '--wd', action='store', dest='wd', required=False, default='.', help='Optional: path to VCF files. By default .vcf in current working directory are used')
+    parser.add_argument('-wd', '--wd', action='store', dest='wd', required=False, default='.', help='Optional: path to VCF files. By default .vcf in current working directory are used.')
+    parser.add_argument('-o', '--output', action='store', dest='output_dir', required=False, default=None, help="Optional: Provide a name.  This name will be a directory output files are writen to.  Name can be a directory path, but doesn't have to be. By default VCF files are worked on in your current working directory")
     parser.add_argument('-t', '--reference_type', action='store', dest='reference_type', default=None, required=False, help='Optional: A valid reference_type name will be automatically found, but a valid reference_type name can be supplied.  See vsnp3_path_adder.py -s')
     parser.add_argument('-b', '--gbk', nargs='*', dest='gbk', required=False, default=None, help='Optional: gbk to annotate VCF file.  Multiple gbk files can be specified with wildcard')
     parser.add_argument('-s', '--defining_snps', action='store', dest='defining_snps', default=None, required=False, help='Optional: Defining SNPs with positions to filter.  See template_define_filter.xlsx in vsnp dependency folder.  Recommended having this file in reference type folder')
@@ -321,8 +322,13 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     if args.wd == '.':
         cwd_test = True
         vcf_list = glob.glob('*vcf')
+        wd_vcf_list = vcf_list
     else:
-        vcf_list = glob.glob(f'{args.wd}/*vcf')
+        #get VCFs from a directory
+        wd = os.path.expanduser(args.wd)
+        wd = os.path.abspath(wd)
+        vcf_list = glob.glob(f'{wd}/*vcf')
+        wd_vcf_list = vcf_list
 
     def zipit(src, dst):
         zf = zipfile.ZipFile("%s.zip" % (dst), "w", zipfile.ZIP_DEFLATED)
@@ -335,12 +341,25 @@ if __name__ == "__main__": # execute if directly access by the interpreter
         zf.close()
         shutil.rmtree(src)
 
+    if args.output_dir:
+        wd_vcf_list = []
+        output_dir = args.output_dir
+        output_dir = os.path.expanduser(output_dir)
+        output_dir = os.path.abspath(output_dir)
+        os.makedirs(output_dir, exist_ok=True)
+        for each_vcf in vcf_list:
+            shutil.copy(each_vcf, output_dir)
+            wd_vcf_list.append(f'{output_dir}/{os.path.basename(each_vcf)}')
+        os.chdir(output_dir)
+        setup.cwd = os.getcwd()
+        global_working_dir = setup.cwd
+
     starting_files = f'{setup.cwd}/vcf_starting_files'
     os.makedirs(starting_files)
-    for each_vcf in vcf_list:
+    for each_vcf in wd_vcf_list:
         shutil.copy(each_vcf, starting_files)
 
-    vcf_to_df = VCF_to_DF(vcf_list=vcf_list, debug=args.debug) #write_out=args.write_out
+    vcf_to_df = VCF_to_DF(vcf_list=wd_vcf_list, debug=args.debug) #write_out=args.write_out
     if args.fix_vcfs:
         sys.exit(0)
 
@@ -386,14 +405,13 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     group = Group(cwd=global_working_dir, metadata=args.metadata, defining_snps=args.defining_snps, excel_remove=args.remove_by_name, gbk_list=args.gbk, dataframes=vcf_to_df.dataframes, all_vcf=args.all_vcf, find_new_filters=args.find_new_filters, no_filters=args.no_filters, qual_threshold=int(args.qual_threshold), n_threshold=int(args.n_threshold), mq_threshold=int(args.mq_threshold), abs_pos=args.abs_pos, group=args.group, debug=args.debug)
     vcf_to_df.vcf_bad_list = vcf_to_df.vcf_bad_list + group.vcf_bad_list
 
-    #by default the VCF files used are not deleted.  They are only deleted when using --remove option AND the files were ran from the current working directory.  ie the --wd option was not used.:
-    if not args.keep_ind_vcfs and cwd_test:
-        for each_vcf in vcf_list:
-            try:
-                os.remove(each_vcf)
-            except FileNotFoundError:
-                # if file was previously removed such as it was empty
-                pass
+    #rm move vcfs from working directory
+    for each_vcf in wd_vcf_list:
+        try:
+            os.remove(each_vcf)
+        except FileNotFoundError:
+            # if file was previously removed such as it was empty
+            pass
 
     setup.print_time()
     HTML_Summary(runtime=setup.run_time, vcf_to_df=vcf_to_df, reference=ro.select_ref, groupings_dict=group.groupings_dict, raxml_version=group.raxml_version, all_vcf_boolen=args.all_vcf, args=args, removed_samples=remove_list) 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.20"
+__version__ = "3.21"
 
 import os
 import subprocess
@@ -145,7 +145,15 @@ class Alignment(Setup):
                 return(qp100)
 
             filtered_hapall = f'{sample_name}_filtered_hapall_nanopore.vcf'
-            bcftools_mpileup = f'bcftools mpileup --threads 16 -Ou -f {reference} {nodup_bamfile} | bcftools call --threads 16 -mv -v -Ov -o {unfiltered_hapall}'
+            if os.path.exists(os.path.realpath('/project/scratch/singularity')):
+                print('Downloading bcftools.sif')
+                os.system(
+                    'singularity pull --name /project/scratch/singularity/bcftools.sif docker://biocontainers/bcftools:v1.9-1-deb_cv1')
+            else:
+                print('Will attempt to run bcftools from conda environment')
+            bcftools_path = os.path.realpath('/project/scratch/singularity/bcftools.sif')
+            bcftools_mpileup = f'singularity exec {bcftools_path} bcftools mpileup --threads 16 -Ou -f {reference} {nodup_bamfile} | singularity exec {bcftools_path} bcftools call --threads 16 -mv -v -Ov -o {unfiltered_hapall}'
+            # bcftools_mpileup = f'bcftools mpileup --threads 16 -Ou -f {reference} {nodup_bamfile} | bcftools call --threads 16 -mv -v -Ov -o {unfiltered_hapall}'
             vcffilter = f'vcffilter -f "QUAL > 20" {unfiltered_hapall} > temp1.vcf'
             os.system(bcftools_mpileup)
             os.system(vcffilter)

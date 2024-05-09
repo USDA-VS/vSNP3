@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.20"
+__version__ = "3.21"
 
 import os
 import sys
@@ -42,7 +42,15 @@ class vSNP3_Step1(Setup):
             self.reference_type = None
             with open(self.FASTA) as f:
                 self.top_header_description = f.readline()
-        elif reference_type: #IF -n OPTION USE IT, ie directory name
+        # elif os.path.isdir(reference_type): # -t directory name with full path
+        #     reference_options = Ref_Options(reference_type)
+        #     concatenated_FASTA = self.concat_fasta(reference_options.fasta)
+        #     self.excel_stats.excel_dict["Reference"] = f'{reference_type} Forced'
+        #     Setup.__init__(self, SAMPLE_NAME=SAMPLE_NAME, FASTA=concatenated_FASTA, FASTQ_R1=FASTQ_R1, FASTQ_R2=FASTQ_R2, gbk=reference_options.gbk, debug=debug)
+        #     self.reference_type = reference_type
+        #     with open(self.FASTA) as f:
+        #         self.top_header_description = f.readline()
+        elif reference_type: # -t directory name
             reference_options = Ref_Options(reference_type)
             concatenated_FASTA = self.concat_fasta(reference_options.fasta)
             self.excel_stats.excel_dict["Reference"] = f'{reference_type} Forced'
@@ -252,7 +260,8 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     parser.add_argument('-f', '--FASTA', nargs='*', dest='FASTA', required=False, help='FASTA file to be used as reference.  Multiple can be specified with wildcard')
     parser.add_argument('-b', '--gbk', nargs='*', dest='gbk', required=False, default=None, help='Optional: gbk to annotate VCF file.  Multiple can be specified with wildcard')
     parser.add_argument('-t', '--reference_type', action='store', dest='reference_type', required=False, default=None, help="Optional: Provide directory name with FASTA and GBK file/s")
-    parser.add_argument('-o', '--nanopore', action='store_true', dest='nanopore', default=False, help='if true run alignment optimized for nanopore reads')
+    parser.add_argument('-p', '--nanopore', action='store_true', dest='nanopore', default=False, help='if true run alignment optimized for nanopore reads')
+    parser.add_argument('-o', '--output_dir', action='store', dest='output_dir', required=False, default=None, help="Optional: Provide a name.  This name will be a directory output files are writen to.  Name can be a directory path, but doesn't have to be.")
     parser.add_argument('-assemble_unmap', '--assemble_unmap', action='store_true', dest='assemble_unmap', help='Optional: skip assembly of unmapped reads.   See also vsnp3_assembly.py')
     parser.add_argument('-spoligo', '--spoligo', action='store_true', dest='spoligo', help='Optional: get spoligotype if TB complex.  See also vsnp3_spoligotype.py')
     parser.add_argument('-d', '--debug', action='store_true', dest='debug', help='keep spades output directory')
@@ -268,6 +277,17 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     for name, module in sorted(sys.modules.items()): 
         if hasattr(module, '__version__') and name in program_list: 
             python_programs.append(f'{name}, {module.__version__}')
+
+    if args.output_dir:
+        output_dir = args.output_dir
+        output_dir = os.path.expanduser(output_dir)
+        output_dir = os.path.abspath(output_dir)
+        os.makedirs(output_dir, exist_ok=True)
+        if args.FASTQ_R1:
+            shutil.copy(args.FASTQ_R1, output_dir)
+        if args.FASTQ_R2:
+            shutil.copy(args.FASTQ_R2, output_dir)
+        os.chdir(output_dir)
 
     vsnp = vSNP3_Step1(SAMPLE_NAME=args.SAMPLE_NAME, FASTQ_R1=args.FASTQ_R1, FASTQ_R2=args.FASTQ_R2, FASTA=args.FASTA, gbk=args.gbk, reference_type=args.reference_type, nanopore=args.nanopore, assemble_unmap=args.assemble_unmap, spoligo=args.spoligo, debug=args.debug)
     vsnp.run()

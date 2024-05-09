@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.20"
+__version__ = "3.21"
 
 import os
 import sys
@@ -36,6 +36,7 @@ class Ref_Options():
         self.gbk = None
         self.remove = None
         self.fasta = None
+        self.select_ref = select_ref
         all_ref_options = []
         script_path = os.path.dirname(os.path.realpath(__file__))
         self.script_path = script_path
@@ -51,27 +52,30 @@ class Ref_Options():
         all_ref_options = [x for x in all_ref_options if os.path.isdir(x)] #only capture directories
         self.all_ref_options = all_ref_options
 
-        #if select_ref is a directory name then use files in it
-        for directory in all_ref_options:
-            if select_ref == directory.split('/')[-1]: #find reference by directory name
-                self.select_ref = select_ref
-                #if the asked for reference is a match grab files
-                self.path = directory
-                self.metadata_gather(directory)
-                continue
-            else:
-                reference_header_capture = defaultdict(list) # find reference by fasta headers
-                # for directory in all_ref_options:
-                for each_fasta in glob.glob(f'{directory}/*fasta'):
-                    with open(each_fasta, 'r') as each_fasta:
-                        for each_line in each_fasta:
-                            if each_line.startswith(">"):
-                                reference_header_capture[directory].append(each_line.strip())
-                for directory, header in reference_header_capture.items():
-                    if select_ref in " ".join(header):
-                        self.select_ref = select_ref
-                        self.path = directory
-                        self.metadata_gather(directory)
+        if os.path.isdir(select_ref): # -t directory name with full path
+            print("Directory is a path on the file system")
+            self.metadata_gather(select_ref)
+        else:
+            #if select_ref is a directory name then use files in it
+            for directory in all_ref_options: 
+                if select_ref == directory.split('/')[-1]: #find reference by directory name
+                    #if the asked for reference is a match grab files
+                    self.path = directory
+                    self.metadata_gather(directory)
+                    continue
+                else: # this portion should probably be removed.  It can cause confusion as to why a reference is found and being used.
+                    reference_header_capture = defaultdict(list) # find reference by fasta headers
+                    # for directory in all_ref_options:
+                    for each_fasta in glob.glob(f'{directory}/*fasta'):
+                        with open(each_fasta, 'r') as each_fasta:
+                            for each_line in each_fasta:
+                                if each_line.startswith(">"):
+                                    reference_header_capture[directory].append(each_line.strip())
+                    for directory, header in reference_header_capture.items():
+                        if select_ref in " ".join(header):
+                            self.select_ref = select_ref
+                            self.path = directory
+                            self.metadata_gather(directory)
 
     def metadata_gather(self, directory):
         defining_snps = glob.glob(f'{directory}/*xlsx')
