@@ -67,11 +67,11 @@ class FASTQ_Stats(Setup):
                 sum_gap = last_line[11]
                 N50 = last_line[12]
                 try:
-                    passQ20 = last_line[13]
+                    passQ20 = last_line[14]
                 except IndexError:
                     passQ20 = 0
                 try:
-                    passQ30 = last_line[14]
+                    passQ30 = last_line[15]
                 except IndexError:
                     passQ30 = 0
 
