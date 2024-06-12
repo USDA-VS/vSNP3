@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.21"
+__version__ = "3.22"
 
 import os
 import sys
@@ -21,6 +21,7 @@ from vsnp3_reference_options import Ref_Options
 from vsnp3_alignment_vcf import Alignment
 from vsnp3_spoligotype import Spoligo
 from vsnp3_group_reporter import GroupReporter
+from vsnp3_fasta_to_fastq import Fasta_to_Paired_Fastq
 
 
 class vSNP3_Step1(Setup):
@@ -255,9 +256,10 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     '''), epilog='''---------------------------------------------------------''')
 
     parser.add_argument('-n', '--SAMPLE_NAME', action='store', dest='SAMPLE_NAME', required=False, help='Force output files to this sample name')
-    parser.add_argument('-r1', '--FASTQ_R1', action='store', dest='FASTQ_R1', required=True, help='Provide R1 FASTQ gz file.  A single read file can also be supplied to this option')
+    parser.add_argument('-r1', '--FASTQ_R1', action='store', dest='FASTQ_R1', required=False, help='Provide R1 FASTQ gz file.  A single read file can also be supplied to this option')
     parser.add_argument('-r2', '--FASTQ_R2', action='store', dest='FASTQ_R2', required=False, default=None, help='Optional: provide R2 FASTQ gz file')
-    parser.add_argument('-f', '--FASTA', nargs='*', dest='FASTA', required=False, help='FASTA file to be used as reference.  Multiple can be specified with wildcard')
+    parser.add_argument('-f', '--FASTAtoFASTQ', action='store', dest='FASTAtoFASTQ', required=False, help='Input a FASTA file, convert to paired FASTQ files, and run.')
+    parser.add_argument('-r', '--FASTA', nargs='*', dest='FASTA', required=False, help='FASTA file to be used as reference.  Multiple can be specified with wildcard')
     parser.add_argument('-b', '--gbk', nargs='*', dest='gbk', required=False, default=None, help='Optional: gbk to annotate VCF file.  Multiple can be specified with wildcard')
     parser.add_argument('-t', '--reference_type', action='store', dest='reference_type', required=False, default=None, help="Optional: Provide directory name with FASTA and GBK file/s")
     parser.add_argument('-p', '--nanopore', action='store_true', dest='nanopore', default=False, help='if true run alignment optimized for nanopore reads')
@@ -271,6 +273,15 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     print(f'\n{os.path.basename(__file__)} SET ARGUMENTS:')
     print(args)
     print("\n")
+
+    if not args.FASTQ_R1 and not args.FASTAtoFASTQ:
+        parser.error('No FASTQ or FASTA provided.  Use -r1 or -f option')
+
+    if args.FASTAtoFASTQ:
+        fasta_to_paired_fastq = Fasta_to_Paired_Fastq(args.FASTAtoFASTQ, coverage=100, read_length=300)
+        args.FASTQ_R1 = fasta_to_paired_fastq.fastq_r1_file
+        args.FASTQ_R2 = fasta_to_paired_fastq.fastq_r2_file
+        print(f'Conversion to FASTQ completed')
 
     program_list = ['Python', 'Bio', 'numpy', 'pandas', 'scipy',]
     python_programs = []
@@ -295,6 +306,8 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     with open(f'{vsnp.sample_name}_run_log.txt', 'w') as run_log:
         print(f'\n{os.path.basename(__file__)} SET ARGUMENTS:', file=run_log)
         print(args, file=run_log)
+        if args.FASTAtoFASTQ:
+            print(f'Converted FASTA to FASTQ', file=run_log)
         print('\nCall Summary:', file=run_log)
         for each in vsnp.alignment_vcf_run_summary:
             print(each, file=run_log)

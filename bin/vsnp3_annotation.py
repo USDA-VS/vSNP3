@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.21"
+__version__ = "3.22"
 
 import os
 import shutil
@@ -118,6 +118,7 @@ class Annotation():
                                 #error out without exception to quit
                                 right = ''
                             self.aa_residue_pos = int((left - part.start) / 3)
+                            self.aa_residue_pos = self.aa_residue_pos + 1 # aa is zero based so add 1
                             if part.strand == -1: # Reverse complement
                                 self.aa_residue_pos = int((part.end - left) / 3)
                             rbc = self.gbk_dict[chrom].seq[left:right]

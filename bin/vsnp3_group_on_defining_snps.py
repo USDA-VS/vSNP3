@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.21"
+__version__ = "3.22"
 
 import os
 import sys
@@ -492,6 +492,7 @@ class Group():
             ####
 
         #find parsimonies uninformative positions
+        # this test is on the ALT being the same per sample
         counter = Counter(position_list_parse_test)
         most_common = counter.most_common()
         most_common = dict(most_common)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.21"
+__version__ = "3.22"
 
 import os
 import shutil
