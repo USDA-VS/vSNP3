@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.22"
+__version__ = "3.23"
 
 import os
 import glob

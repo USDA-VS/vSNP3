@@ -13,7 +13,7 @@ Tested with Python 3.8 - 3.9.
 Anaconda [setup](./docs/instructions/conda_instructions.md)
 
 ```
-conda create -c conda-forge -c bioconda -n vsnp3 vsnp3=3.22
+conda create -c conda-forge -c bioconda -n vsnp3 vsnp3=3.23
 ```
 
 ## Installation test
@@ -81,7 +81,7 @@ Test step 2:
 cd ~/vsnp3_test_dataset/NC_045512_test_files/step2
 ```
 ```
-vsnp3_step2.py -a -t NC_045512_wuhan-hu-1
+vsnp3_step2.py -a -t NC_045512_wuhan-hu-1 -remove
 ```
 
 ## Description
@@ -117,8 +117,15 @@ See `-h` option for detail and usage
 - vsnp3_excel_merge_files.py
 - vsnp3_filter_finder.py
 - vsnp3_spoligotype.py
+ 
+## Input Summary
 
-[Additional Tools](./docs/instructions/additional_tools.md)
+<!-- <img src="../dependencies/vsnp_inputs.png" alt="vSNP inputs" width="500"> -->
+![vSNP inputs](docs/img/vsnp_inputs.png "vSNP inputs")
+## Map
+
+<!-- ![vSNP script usage](../dependencies/vsnp3_structure.jpg "Script structure") -->
+![Script structure](docs/img/vsnp3_structure.png "Script structure")
 
 ## Version Enhancements
 
@@ -147,3 +154,5 @@ See `-h` option for detail and usage
 - Detailed steps recorded in run_log.txt.
 - Spoligotype for TB complex isolates not found by default.  -s option required with step 1 or find using vsnp3_spoligotype.py.
 - Brucella MLST removed from step 1.  Find Brucella MLST using vsnp3_bruc_mlst.py.
+
+[Additional Tools](./docs/instructions/additional_tools.md)
