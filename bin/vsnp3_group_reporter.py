@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.23"
+__version__ = "3.24"
 
 import os
 import io
@@ -100,6 +100,7 @@ class GroupReporter:
             defining_snps = self.defining_snps
             inverted_defining_snps = self.inverted_defining_snps
             try:
+                sample_groups_list = []
                 defining_snp = False
                 for abs_position in list(defining_snps.keys() & (found_positions.keys() | found_positions_mix.keys())): #absolute positions in set union of two list
                     group = defining_snps[abs_position]
@@ -112,10 +113,21 @@ class GroupReporter:
                         group = inverted_defining_snps[abs_position]
                         sample_groups_list.append(group)
                         defining_snp = True
-                if defining_snp:
-                    sample_groups_list = sorted(sample_groups_list)
-                else:
+
+                if defining_snp is False: # extra step to get the group name when there are mutliple defining snps for a group.
+                    for abs_position in list(defining_snps.keys()):
+                        set_abs_position = set(abs_position.split(", "))
+                        set_found_positions = set(found_positions.keys())
+                        is_subset = set_abs_position.issubset(set_found_positions)
+                        if is_subset:
+                            group = defining_snps[abs_position]
+                            sample_groups_list.append(group)
+
+                if len(sample_groups_list) == 0:
                     sample_groups_list = ['No defining SNPs']
+                else:
+                    sample_groups_list = sorted(sample_groups_list)
+
             except TypeError:
                 message = f'File TypeError'
                 print(f'{message}: {filename}')

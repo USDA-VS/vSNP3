@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.23"
+__version__ = "3.24"
 
 import os
 import subprocess
@@ -336,7 +336,7 @@ class Alignment(Setup):
         print(r'\end{adjustbox}', file=tex)
         print(r'\begin{adjustbox}{width=1\textwidth}', file=tex)
         
-        print(r'\begin{tabular}{ l | l | l | l | l | l }', file=tex)
+        print(r'\begin{tabular}{ l | l | l | l | l | l | l }', file=tex)
         print(r'Mapped Paired Reads & Mapped Single Reads & Unmapped Reads & Unmapped Percent & \multicolumn{2}{l}{Unmapped Assembled Contigs} \\', file=tex)
         print(r'\hline', file=tex) 
         mapped_reads = self.READS_PAIRED + self.READS_SINGLE
@@ -346,16 +346,16 @@ class Alignment(Setup):
         print(r'\hline', file=tex)
         print(r'\hline', file=tex)
         
-        print(r'Duplicate Paired Reads & Duplicate Single Reads & \multicolumn{4}{l}{Duplicate Percent of Mapped Reads} \\', file=tex)
+        print(r'Duplicate Paired Reads & Duplicate Single Reads & \multicolumn{5}{l}{Duplicate Percent of Mapped Reads} \\', file=tex)
         print(r'\hline', file=tex)
-        print(f'{self.DUPLICATE_PAIR:,} & {self.DUPLICATE_SINGLE:,} & ' + r'\multicolumn{4}{l}{' + f'{(self.DUPLICATION_RATIO*100):,.1f}' + r'\%} \\', file=tex)
+        print(f'{self.DUPLICATE_PAIR:,} & {self.DUPLICATE_SINGLE:,} & ' + r'\multicolumn{5}{l}{' + f'{(self.DUPLICATION_RATIO*100):,.1f}' + r'\%} \\', file=tex)
         print(r'\hline', file=tex)
         print(r'\hline', file=tex)
 
-        print(f'BAM File & Reference Length & Genome with Coverage & Average Depth & No Coverage Bases & Quality SNPs \\\\', file=tex)
+        print(f'BAM File & Reference Length & Genome with Coverage & Average Depth & No Coverage Bases & Ambiguous SNPs & Quality SNPs \\\\', file=tex)
         print(r'\hline', file=tex)
         bam = self.zero_coverage.bam.replace('_', '\_')
-        print(f'{bam} & {self.zero_coverage.reference_length:,} & {(self.zero_coverage.genome_coverage*100):,.2f}\% & {self.zero_coverage.ave_coverage:,.1f}X & {self.zero_coverage.total_zero_coverage:,} & {self.zero_coverage.good_snp_count:,} \\\\', file=tex)
+        print(f'{bam} & {self.zero_coverage.reference_length:,} & {(self.zero_coverage.genome_coverage*100):,.2f}\% & {self.zero_coverage.ave_coverage:,.1f}X & {self.zero_coverage.total_zero_coverage:,} & {self.zero_coverage.ac1_count:,} & {self.zero_coverage.good_snp_count:,} \\\\', file=tex)
         print(r'\hline', file=tex)
 
         if groups:
@@ -386,6 +386,7 @@ class Alignment(Setup):
         excel_dict['Average Depth'] = f'{self.zero_coverage.ave_coverage:,.1f}X'
         excel_dict['No Coverage Bases'] = f'{self.zero_coverage.total_zero_coverage:,}'
         excel_dict['Percent Ref with Zero Coverage'] = f'{self.zero_coverage.percent_ref_with_zero_coverage:,.6f}%'
+        excel_dict['Ambiguous SNPs'] = f'{self.zero_coverage.ac1_count:,}'
         excel_dict['Quality SNPs'] = f'{self.zero_coverage.good_snp_count:,}'
 
 

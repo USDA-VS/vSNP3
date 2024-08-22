@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.23"
+__version__ = "3.24"
 
 import os
 import sys
@@ -370,8 +370,11 @@ class Group():
         # print(f'\n\nTotal Time: {datetime.now() - self.beginTime}\n')
 
         #Add back those that where a group was not found
+        if 'Group Not Found' not in groupings_dict:
+            groupings_dict['Group Not Found'] = {}
+
         for sample in samples_without_group_set:
-            groupings_dict = {**groupings_dict, 'Group Not Found': {sample: None}}
+            groupings_dict['Group Not Found'][sample] = pd.DataFrame()
         self.groupings_dict = groupings_dict # will be passed to html summary
 
     def group_selection(self, abs_pos):

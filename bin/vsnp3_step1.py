@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.23"
+__version__ = "3.24"
 
 import os
 import sys
@@ -132,7 +132,7 @@ class vSNP3_Step1(Setup):
         except AttributeError:
             pass
         self.MYCO = MYCO
-        if MYCO and self.spoligo:
+        if self.spoligo:
             spoligo = Spoligo(SAMPLE_NAME=self.sample_name, FASTQ_R1=self.FASTQ_R1, FASTQ_R2=self.FASTQ_R2, debug=self.debug)
             spoligo.spoligo()
             spoligo.latex(self.latex_report.tex)

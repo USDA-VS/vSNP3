@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.23"
+__version__ = "3.24"
 
 import os
 import gzip
@@ -163,7 +163,7 @@ class Spoligo(Setup):
         count_summary = pull.compute()
         count_summary = OrderedDict(sorted(count_summary.items()))
         spoligo_binary_dictionary = {}
-        self.call_cut_off = 4
+        self.call_cut_off = 2
         for k, v in count_summary.items():
             if v > self.call_cut_off:
                 spoligo_binary_dictionary.update({k: 1})

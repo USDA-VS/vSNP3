@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.23"
+__version__ = "3.24"
 
 import os
 import subprocess
@@ -312,7 +312,8 @@ class Tables:
         # sample_path_name = self.sample_path_name
         st = self.st
         table_df = pd.read_json(df_json, orient='split')
-        writer = pd.ExcelWriter(write_to, engine='xlsxwriter')
+        writer = pd.ExcelWriter(write_to, engine='xlsxwriter',)
+        writer.book.use_zip64()
         table_df.to_excel(writer, sheet_name='Sheet1')
         wb = writer.book
         ws = writer.sheets['Sheet1']

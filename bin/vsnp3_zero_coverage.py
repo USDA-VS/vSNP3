@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.23"
+__version__ = "3.24"
 
 import os
 import re
@@ -21,6 +21,28 @@ class Zero_Coverage(Setup):
     ''' 
     '''
     def __init__(self, FASTA=None, bam=None, vcf=None, debug=False):
+
+        def count_ac1_positions(vcf_file):
+            ac1_count = 0
+            
+            with open(vcf_file, 'r') as f:
+                for line in f:
+                    # Skip header lines
+                    if line.startswith('#'):
+                        continue
+                    
+                    # Split the line into fields
+                    fields = line.strip().split('\t')
+                    
+                    # Check if INFO field contains AC=1
+                    info = fields[7]
+                    if 'AC=1' in info.split(';'):
+                        ac1_count += 1
+            
+            return ac1_count
+
+        self.ac1_count = count_ac1_positions(vcf)
+        print(f"Number of positions with AC=1: {self.ac1_count:,}")
 
         Setup.__init__(self, FASTA=FASTA, debug=debug)
         self.print_run_time('Zero Coverage')
@@ -116,11 +138,11 @@ class Zero_Coverage(Setup):
         print(r'\end{center}', file=tex)
         print(r'\end{adjustbox}', file=tex)
         print(r'\begin{adjustbox}{width=1\textwidth}', file=tex)
-        print(r'\begin{tabular}{ l | l | l | l | l | l | l }', file=tex)
-        print(f'BAM File & Reference Length & Genome with Coverage & Average Depth & No Coverage Bases & Quality SNPs \\\\', file=tex)
+        print(r'\begin{tabular}{ l | l | l | l | l | l | l | l }', file=tex)
+        print(f'BAM File & Reference Length & Genome with Coverage & Average Depth & No Coverage Bases & Ambiguous SNPs & Quality SNPs \\\\', file=tex)
         print(r'\hline', file=tex)
         bam = self.bam.replace('_', '\_')
-        print(f'{bam} & {self.reference_length:,} & {(self.genome_coverage*100):,.2f}\% & {self.ave_coverage:,.1f}X & {self.total_zero_coverage:,} & {self.good_snp_count:,} \\\\', file=tex)
+        print(f'{bam} & {self.reference_length:,} & {(self.genome_coverage*100):,.2f}\% & {self.ave_coverage:,.1f}X & {self.total_zero_coverage:,} & {self.ac1_count:,} & {self.good_snp_count:,} \\\\', file=tex)
         print(r'\hline', file=tex)
         print(r'\end{adjustbox}', file=tex)
         print(r'\vspace{0.1 mm}', file=tex)
@@ -136,6 +158,7 @@ class Zero_Coverage(Setup):
         excel_dict['Average Depth'] = f'{self.ave_coverage:,.1f}'
         excel_dict['No Coverage Bases'] = f'{self.total_zero_coverage:,}'
         excel_dict['Percent Ref with Zero Coverage'] = f'{self.percent_ref_with_zero_coverage:,.6f}%'
+        excel_dict['Ambiguous SNPs'] = f'{self.ac1_count:,}'
         excel_dict['Quality SNPs'] = f'{self.good_snp_count:,}'
 
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.23"
+__version__ = "3.24"
 
 import os
 import sys
@@ -218,7 +218,10 @@ class HTML_Summary():
             print("<tr>", file=htmlfile)
             print(f"<td>{key}</td>", end='\t', file=htmlfile)
             for group in value:
-                print(f"<td>{group}</td>", end='\t', file=htmlfile)
+                if group == "Group Not Found":
+                    print(f'<td><span style="color: red;">{group}</span></td>', end='\t', file=htmlfile)
+                else:
+                    print(f"<td>{group}</td>", end='\t', file=htmlfile)
             print("</tr>", file=htmlfile)
         print("</table>", file=htmlfile)
 
