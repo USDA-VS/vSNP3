@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.24"
+__version__ = "3.25"
 
 import os
 import sys
@@ -314,6 +314,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     parser.add_argument('-i', '--find_new_filters', action='store_true', dest='find_new_filters', help='Optional: find new positions to apply to the filter file.  Positions must be manually added to filter file.  They are not added by running this command.  Only text files are output showing position detail. Curant before adding filters')
     parser.add_argument('-abs_pos', '--abs_pos', action='store', dest='abs_pos', required=False, help='Optional: Make a group on defining SNP.  Must be supplied with --group option.  Format as chrom in VCF, chrom:10000.')
     parser.add_argument('-group', '--group', action='store', dest='group', required=False, help='Optional: Name a group on defining SNP.  Must be supplied with --abs_pos option')
+    parser.add_argument('-hash', '--hash_groups', action='store_true', dest='hash_groups', required=False, help='Optional: The option will run defining snps marked with a # in the defining snps file.  The # is removed and the defining snps are run.')
     parser.add_argument('-d', '--debug', action='store_true', dest='debug', help='Optional: Keep debugging files and run without pooling.  A pickle file will be kept for troubleshooting to be used directly in vsnp3_group_on_defining_snps.py.  This saves processing time')
     parser.add_argument('-v', '--version', action='version', version=f'{os.path.basename(__file__)}: version {__version__}')
     args = parser.parse_args()
@@ -366,6 +367,20 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     if args.fix_vcfs:
         sys.exit(0)
 
+    # Create the file to indicate the script is running
+    notification_file = "step2_is_running__individual_folders_may_be_complete"   
+    with open(notification_file, 'w') as f:
+        f.write("Script is still running.")
+    print(f"Created file: {notification_file}")
+
+    #rm move vcfs from working directory
+    for each_vcf in wd_vcf_list:
+        try:
+            os.remove(each_vcf)
+        except FileNotFoundError:
+            # if file was previously removed such as it was empty
+            pass
+
     print(f'\nvcf_bad_list')
     for each in vcf_to_df.vcf_bad_list:
         print(f'\t {each}')
@@ -405,18 +420,12 @@ if __name__ == "__main__": # execute if directly access by the interpreter
         shutil.copy(args.defining_snps, starting_files) #package with starting files for the record
     zipit(starting_files, starting_files) # zip starting files directory
 
-    group = Group(cwd=global_working_dir, metadata=args.metadata, defining_snps=args.defining_snps, excel_remove=args.remove_by_name, gbk_list=args.gbk, dataframes=vcf_to_df.dataframes, all_vcf=args.all_vcf, find_new_filters=args.find_new_filters, no_filters=args.no_filters, qual_threshold=int(args.qual_threshold), n_threshold=int(args.n_threshold), mq_threshold=int(args.mq_threshold), abs_pos=args.abs_pos, group=args.group, debug=args.debug)
+    group = Group(cwd=global_working_dir, metadata=args.metadata, defining_snps=args.defining_snps, excel_remove=args.remove_by_name, gbk_list=args.gbk, dataframes=vcf_to_df.dataframes, all_vcf=args.all_vcf, find_new_filters=args.find_new_filters, no_filters=args.no_filters, qual_threshold=int(args.qual_threshold), n_threshold=int(args.n_threshold), mq_threshold=int(args.mq_threshold), abs_pos=args.abs_pos, group=args.group, hash_groups=args.hash_groups, debug=args.debug)
     vcf_to_df.vcf_bad_list = vcf_to_df.vcf_bad_list + group.vcf_bad_list
-
-    #rm move vcfs from working directory
-    for each_vcf in wd_vcf_list:
-        try:
-            os.remove(each_vcf)
-        except FileNotFoundError:
-            # if file was previously removed such as it was empty
-            pass
 
     setup.print_time()
     HTML_Summary(runtime=setup.run_time, vcf_to_df=vcf_to_df, reference=ro.select_ref, groupings_dict=group.groupings_dict, raxml_version=group.raxml_version, all_vcf_boolen=args.all_vcf, args=args, removed_samples=remove_list) 
-
+    
+    os.remove(notification_file)
+    print(f"Deleted file: {notification_file}")
 # Created 2021 by Tod Stuber

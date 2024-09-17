@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.24"
+__version__ = "3.25"
 
 import os
 import subprocess
@@ -18,6 +18,7 @@ import argparse
 import textwrap
 import itertools
 from Bio import SeqIO
+from collections import defaultdict
 
 
 class Tree:
@@ -140,7 +141,7 @@ class Tree:
 
 class Tables:
 
-    def __init__(self, fasta_alignments=None, df_alignments=None, tree=None, gbk=None, mq=None, write_path=None, table_name=None, debug=False,):
+    def __init__(self, fasta_alignments=None, df_alignments=None, tree=None, gbk=None, mq=None, write_path=None, groupings_dict=None, table_name=None, debug=False,):
         self.fasta_alignments = fasta_alignments
         self.df_alignments = df_alignments
         self.tree = tree
@@ -148,6 +149,14 @@ class Tables:
         self.mq = mq
         self.debug = debug
         self.st = datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d_%H-%M-%S')
+        self.groupings_dict = groupings_dict
+                
+        if self.groupings_dict:
+            group_vcfs_dict = defaultdict(list) #invert the key, values
+            for group, dataframes in self.groupings_dict.items():
+                for vcf in dataframes.keys():
+                    group_vcfs_dict[vcf].append(group)
+            self.group_vcfs_dict = dict(sorted(group_vcfs_dict.items())) #sorts on key(vcf name)
 
         if not write_path:
             write_path = os.getcwd()
@@ -279,6 +288,16 @@ class Tables:
         else:
             # df = df.append(pd.Series(name='no annotations'))
             df = pd.concat([df, pd.Series(name='no annotations').to_frame().T])
+
+        # Join the list items in the dictionary values into single strings
+        joined_data = {key: '; '.join(map(str, value)) for key, value in self.group_vcfs_dict.items()}
+        # Make groupings into a new Series from the dictionary of sample names: [list group names]
+        new_series = pd.Series(joined_data)
+
+        # Check if 'Grouping' column already exists
+        # if 'Grouping' not in df.columns:
+        #     df.insert(0, 'Grouping', new_series)
+
         max_size=10000 #max columns allowed in tables
         count=0
         chunk_start=0
@@ -290,6 +309,8 @@ class Tables:
                 # print(f'{column_count} columns > {max_size}, cascade table break {count}')
                 chunck_end += max_size
                 df_split = df.iloc[:, chunk_start:chunck_end]
+                if 'Grouping' not in df.columns:
+                    df_split.insert(0, 'Grouping', new_series)
                 df_split.to_json(f'{self.write_path}/df{count}.json', orient='split')
                 self.excel_formatter(f'{self.write_path}/df{count}.json', f'{self.write_path}/{self.table_name}_{table_type}_table{count}-{self.st}.xlsx')
                 os.remove(f'{self.write_path}/df{count}.json')
@@ -298,10 +319,15 @@ class Tables:
             count += 1
             # print(f'Last break {column_count} columns, cascade table break {count}')
             df_split = df.iloc[:, chunk_start:]
+            if 'Grouping' not in df.columns:
+                df_split.insert(0, 'Grouping', new_series)
             df_split.to_json(f'{self.write_path}/df{count}.json', orient='split')
             self.excel_formatter(f'{self.write_path}/df{count}.json', f'{self.write_path}/{self.table_name}_{table_type}_table{count}-{self.st}.xlsx')
             os.remove(f'{self.write_path}/df{count}.json')
         else: # no break needed
+            # Insert the new column at position 1 (right after the sample names column)
+            if 'Grouping' not in df.columns:
+                df.insert(0, 'Grouping', new_series)
             df.to_json(f'{self.write_path}/df.json', orient='split')
             self.excel_formatter(f'{self.write_path}/df.json', f'{self.write_path}/{self.table_name}_{table_type}_table-{self.st}.xlsx')
             os.remove(f'{self.write_path}/df.json')
@@ -330,27 +356,30 @@ class Tables:
 
         ws.set_column(0, 0, 30)
         ws.set_column(1, cols, 2.1)
-        ws.freeze_panes(2, 1)
+        ws.freeze_panes(2, 2)
         formatannotation = wb.add_format({'font_color': '#0A028C', 'rotation': '-90', 'align': 'top'})
         #set last row
         ws.set_row(rows + 1, cols + 1, formatannotation)
 
         #'first_row', 'first_col', 'last_row', and 'last_col'
         # Careful that row/column locations don't overlap
-        ws.conditional_format(rows - 2, 1, rows - 1, cols, {'type': 'cell', 'criteria': '<', 'value': 55, 'format': formatlowqual})
-        ws.conditional_format(2, 1, rows - 2, cols, {'type': 'cell', 'criteria': '==', 'value': 'B$2', 'format': formatnormal})
-        ws.conditional_format(2, 1, rows - 2, cols, {'type': 'text', 'criteria': 'containing', 'value': 'A', 'format': formatA})
-        ws.conditional_format(2, 1, rows - 2, cols, {'type': 'text', 'criteria': 'containing', 'value': 'G', 'format': formatG})
-        ws.conditional_format(2, 1, rows - 2, cols, {'type': 'text', 'criteria': 'containing', 'value': 'C', 'format': formatC})
-        ws.conditional_format(2, 1, rows - 2, cols, {'type': 'text', 'criteria': 'containing', 'value': 'T', 'format': formatT})
-        ws.conditional_format(2, 1, rows - 2, cols, {'type': 'text', 'criteria': 'containing', 'value': 'S', 'format': formatambigous})
-        ws.conditional_format(2, 1, rows - 2, cols, {'type': 'text', 'criteria': 'containing', 'value': 'Y', 'format': formatambigous})
-        ws.conditional_format(2, 1, rows - 2, cols, {'type': 'text', 'criteria': 'containing', 'value': 'R', 'format': formatambigous})
-        ws.conditional_format(2, 1, rows - 2, cols, {'type': 'text', 'criteria': 'containing', 'value': 'W', 'format': formatambigous})
-        ws.conditional_format(2, 1, rows - 2, cols, {'type': 'text', 'criteria': 'containing', 'value': 'K', 'format': formatambigous})
-        ws.conditional_format(2, 1, rows - 2, cols, {'type': 'text', 'criteria': 'containing', 'value': 'M', 'format': formatambigous})
-        ws.conditional_format(2, 1, rows - 2, cols, {'type': 'text', 'criteria': 'containing', 'value': 'N', 'format': formatN})
-        ws.conditional_format(2, 1, rows - 2, cols, {'type': 'text', 'criteria': 'containing', 'value': '-', 'format': formatN})
+        start_col = 2  # This is column C
+        end_col = cols
+
+        ws.conditional_format(rows - 2, start_col, rows - 1, end_col, {'type': 'cell', 'criteria': '<', 'value': 55, 'format': formatlowqual})
+        ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'cell', 'criteria': '==', 'value': 'C$2', 'format': formatnormal})
+        ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'text', 'criteria': 'containing', 'value': 'A', 'format': formatA})
+        ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'text', 'criteria': 'containing', 'value': 'G', 'format': formatG})
+        ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'text', 'criteria': 'containing', 'value': 'C', 'format': formatC})
+        ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'text', 'criteria': 'containing', 'value': 'T', 'format': formatT})
+        ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'text', 'criteria': 'containing', 'value': 'S', 'format': formatambigous})
+        ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'text', 'criteria': 'containing', 'value': 'Y', 'format': formatambigous})
+        ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'text', 'criteria': 'containing', 'value': 'R', 'format': formatambigous})
+        ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'text', 'criteria': 'containing', 'value': 'W', 'format': formatambigous})
+        ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'text', 'criteria': 'containing', 'value': 'K', 'format': formatambigous})
+        ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'text', 'criteria': 'containing', 'value': 'M', 'format': formatambigous})
+        ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'text', 'criteria': 'containing', 'value': 'N', 'format': formatN})
+        ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'text', 'criteria': 'containing', 'value': '-', 'format': formatN})
 
         format_rotation = wb.add_format({})
         format_rotation.set_rotation(90)

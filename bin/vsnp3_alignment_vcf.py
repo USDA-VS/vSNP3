@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.24"
+__version__ = "3.25"
 
 import os
 import subprocess
@@ -383,7 +383,7 @@ class Alignment(Setup):
         excel_dict['BAM/Reference File'] = f'{self.zero_coverage.bam} made with {self.reference_name}'
         excel_dict['Reference Length'] = f'{self.zero_coverage.reference_length:,}'
         excel_dict['Genome with Coverage'] = f'{(self.zero_coverage.genome_coverage*100):,.2f}%'
-        excel_dict['Average Depth'] = f'{self.zero_coverage.ave_coverage:,.1f}X'
+        excel_dict['Average Depth'] = f'{self.zero_coverage.ave_coverage:,.1f}'
         excel_dict['No Coverage Bases'] = f'{self.zero_coverage.total_zero_coverage:,}'
         excel_dict['Percent Ref with Zero Coverage'] = f'{self.zero_coverage.percent_ref_with_zero_coverage:,.6f}%'
         excel_dict['Ambiguous SNPs'] = f'{self.zero_coverage.ac1_count:,}'

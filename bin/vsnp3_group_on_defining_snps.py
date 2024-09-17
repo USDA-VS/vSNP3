@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.24"
+__version__ = "3.25"
 
 import os
 import sys
@@ -41,7 +41,7 @@ class bcolors:
 class Group():
     ''' 
     '''
-    def __init__(self, cwd=None, metadata=None, excel_remove=None, gbk_list=None, defining_snps=None, dataframes=None, pickle_file=None, abs_pos=None, group=None, all_vcf=None, find_new_filters=None, no_filters=True, qual_threshold=150, n_threshold=50, mq_threshold=56, debug=False):
+    def __init__(self, cwd=None, metadata=None, excel_remove=None, gbk_list=None, defining_snps=None, dataframes=None, pickle_file=None, abs_pos=None, group=None, all_vcf=None, find_new_filters=None, no_filters=True, qual_threshold=150, n_threshold=50, mq_threshold=56, hash_groups=None, debug=False):
 
         self.qual_threshold = qual_threshold
         self.n_threshold = n_threshold
@@ -75,7 +75,33 @@ class Group():
             defining_snps_dict={}
             defining_snps_dict[abs_pos] = group
         elif defining_snps:
-            defining_snps_df = pd.read_excel(defining_snps)  
+            if hash_groups:
+                # Read the Excel file
+                defining_snps_df = pd.read_excel(defining_snps, header=None)
+
+                # Check the first row for "#" signs and remove them
+                if not defining_snps_df.empty:
+                    first_row = defining_snps_df.iloc[0]
+                    cleaned_first_row = first_row.apply(lambda x: str(x).replace("#", "") if pd.notna(x) else x)
+                    defining_snps_df.iloc[0] = cleaned_first_row
+
+                    # Set the cleaned first row as column names and remove it from the data
+                    defining_snps_df.columns = defining_snps_df.iloc[0]
+                    defining_snps_df = defining_snps_df.drop(defining_snps_df.index[0])
+
+                    # Reset the index
+                    defining_snps_df = defining_snps_df.reset_index(drop=True)
+
+                    # Remove empty columns
+                    defining_snps_df = defining_snps_df.dropna(axis=1, how='all')
+
+                    # Remove columns where all values are empty strings
+                    defining_snps_df = defining_snps_df.loc[:, (defining_snps_df != '').any()]
+
+                # Now defining_snps_df contains the data with "#" signs removed from the column names and empty columns removed
+            else:
+                defining_snps_df = pd.read_excel(defining_snps)  
+
             try:
                 defining_snps_dict = defining_snps_df.iloc[:, 1:].head(n=1).to_dict(orient='records')[0] # drop first "all" column, just keep abs_pos and group, and make into dictionary of key=abs_pos, item=group
             except IndexError:
@@ -266,6 +292,7 @@ class Group():
             else:
                 groupings_dict['all_vcf'] = self.dataframe_essentials
 
+        self.groupings_dict = groupings_dict
         print(f'All relevant positions by group')
         self.startTime = datetime.now()
         #Get all position in each group
@@ -533,7 +560,7 @@ class Group():
 
     def raxml_table_build(self, group):
         tree = Tree(fasta_alignments=self.group_fasta_dict[group], write_path=f'{self.cwd}/{group}', tree_name=group)
-        tables = Tables(df_alignments=self.group_dataframe_dict[group], tree=tree.newick, gbk=self.annotation_df, mq=self.average_mq_df, write_path=f'{self.cwd}/{group}', table_name=group, debug=False)
+        tables = Tables(df_alignments=self.group_dataframe_dict[group], tree=tree.newick, gbk=self.annotation_df, mq=self.average_mq_df, write_path=f'{self.cwd}/{group}', groupings_dict=self.groupings_dict, table_name=group, debug=False)
         tables.build_tables()
         self.raxml_version = tree.raxml_version
 
