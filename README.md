@@ -1,23 +1,56 @@
-# vSNP3: Variant Calling and SNP Analysis Tool
+# vSNP3: Variant Calling and SNP Analysis Tool for Diagnostic Labs
 
-vSNP3 is a robust tool for high-resolution SNP analysis, designed for disease tracing and outbreak investigations. It generates BAM, VCF, and annotated SNP tables along with corresponding phylogenetic trees.
+vSNP3 is a robust tool for high-resolution Single Nucleotide Polymorphism (SNP) analysis tailored for diagnostic laboratories. It is designed for disease tracing and outbreak investigations. It generates BAM, VCF, and annotated SNP matrices along with corresponding phylogenetic trees. The pipeline is structured into two main steps, optimizing workflow efficiency and computational resource use.
 
-## Features
+vSNP3's two-step approach offers a powerful, flexible, and efficient solution for SNP analysis in diagnostic settings. Its ability to handle large datasets, support multiple reference genomes, and facilitate iterative analyses makes it an important tool for genomic epidemiology and pathogen surveillance.
 
-- Generates annotated SNP tables and phylogenetic trees
-- Processes large-scale datasets
-- Accommodates multiple references
-- Accreditation-friendly with easy error correction and SNP validation
-- Scalable reporting
-- Compatible with Python 3.8 - 3.11
+## Pipeline Overview
 
-## Installation
+### Step 1: Alignment and SNP Calling
 
-### Prerequisites
+This initial step processes raw sequencing data and produces high-quality SNP calls:
 
-- Anaconda or Miniconda
+1. **Input**: Raw sequencing data (FastQ format)
+2. **Alignment**: Uses tools like Samtools and Burrows-Wheeler Aligner (BWA) to map reads to a reference genome
+3. **SNP Detection**: Generates Variant Call Format (VCF) files
+4. **Zero Coverage Tracking**: Creates VCF files for positions lacking sequence data
+5. **Output**: Individual sample directories containing:
+   - Alignment data
+   - VCF files
+   - Sequencing quality metrics
 
-### Conda Installation
+### Step 2: SNP Matrix and Phylogenetic Tree Generation
+
+This step combines the VCF files from Step 1 to create SNP matrices and construct phylogenetic trees:
+
+1. **Input**: VCF files from Step 1 (all aligned to the same reference)
+2. **SNP Matrix Creation**: Combines parsimonious SNPs from all samples.
+3. **SNP Sorting**: Organizes SNPs by frequency or reference position
+4. **Mixed SNP Handling**: Uses IUPAC ambiguity codes for positions with multiple alleles
+5. **Phylogenetic Tree Construction**: Builds trees based on the SNP matrices
+6. **Output**: 
+   - SNP matrices with visualizations of evolutionary relationships
+   - Phylogenetic trees
+
+### Reference-Based Organization
+
+- Each sample in Step 1 generates a separate output directory
+- Directories contain all files specific to a reference (BAM, VCF, metrics)
+- Ensures traceability and reproducibility of SNP calls
+
+### Flexible Analysis
+
+- Step 2 can be rerun independently of Step 1
+- Allows easy inclusion or exclusion of samples without realignment
+- Supports comparisons across multiple reference genomes
+
+### Efficiency and Scalability
+
+- Two-step approach optimizes resource use for large datasets
+- Ideal for diagnostic workflows requiring repeated analyses
+- Streamlines handling of growing sample collections over time
+
+# Installation
 
 ```bash
 conda create -c conda-forge -c bioconda -n vsnp3 vsnp3=3.25
@@ -61,7 +94,7 @@ vsnp3_step2.py -h
      vsnp3_step2.py -a -t Mycobacterium_AF2122
      ```
 
-## Usage
+## Script detail
 
 vSNP3 is divided into two main steps:
 
@@ -99,77 +132,11 @@ Additional scripts:
 
 For detailed usage of each script, use the `-h` option.
 
-
-## Version Enhancements
-
-# vSNP3 Version Enhancements
-
-1. Extended Python support for versions 3.9 to 3.11.
-
-2. Improved modularity for enhanced function usage.
-
-3. Implemented Sourmash for optimal reference selection.
-
-4. Flexibility in dependency file provision:
-   - File options can be explicit or based on reference directory.
-
-5. Added customizable thresholds as user options.
-
-6. Introduced utility script for downloading complete or partial GenBank files.
-
-8. Updated and enhanced annotation descriptions:
-   - Improved handling of cases with no provided annotation.
-
-9. Refined indel calling:
-   - Indels at group SNP positions are now called as 'N'.
-
-10. Improved error handling:
-    - Script halts when VCF files in a set have incorrect chromosome information.
-
-11. Enhanced reproducibility:
-    - Defining SNPs and filters are now zipped with starting VCF files.
-
-12. Added capability to test defining SNPs individually.
-
-13. Enabled generation of cascading SNP tables from FASTA alignments alone.
-
-14. Improved version tracking and option capturing.
-
-15. Enhanced file input options for greater flexibility.
-
-16. Added beta support for Oxford Nanopore reads.
-
-17. Refined naming conventions:
-    - 'all_vcf' now used as the defining SNP column label.
-
-18. Simplified installation process:
-    - Removed Picard, eliminating Java requirements and facilitating easier Conda installation.
-
-19. Implemented strict sample/VCF file naming requirements for metadata matching:
-    - Two-column metadata Excel worksheet's first column must exactly match VCF filename, with fallback options.
-
-20. Improved organization of cascading SNP tables.
-
-21. Modified default behavior for unmapped reads:
-    - Assembly of unmapped reads now requires a specific flag.
-
-22. Enhanced logging:
-    - Detailed steps are now recorded in 'run_log.txt'.
-
-23. Changed spoligotype handling for TB complex isolates:
-    - Now requires '-s' option with step 1, or use of 'vsnp3_spoligotype.py'.
-
-24. Relocated Brucella MLST functionality:
-    - Removed from step 1; now available through 'vsnp3_bruc_mlst.py'.
-
-- And [more...](https://github.com/USDA-VS/vSNP3/releases)
-
-
 ## Additional Tools
 
 For information on additional tools, see [Additional Tools](./docs/instructions/additional_tools.md).
 
-## Contributing
+##
 
 [Citation](https://bmcgenomics.biomedcentral.com/articles/10.1186/s12864-024-10437-5)
 
