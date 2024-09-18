@@ -93,6 +93,7 @@ vsnp3_step2.py -h
      cd ~/vsnp3_test_dataset/AF2122_test_files/step2
      vsnp3_step2.py -a -t Mycobacterium_AF2122
      ```
+     **Note:** "_zc.vcf" files from step 1 are used in step 2.  These "_zc.vcf" contain positions with Zero Coverage.
 
 ## Script detail
 
