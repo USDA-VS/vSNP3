@@ -180,6 +180,6 @@ For information on additional tools, see [Additional Tools](./docs/instructions/
 
 ##
 
-[Citation](https://bmcgenomics.biomedcentral.com/articles/10.1186/s12864-024-10437-5)
+For more information or support, please open an [issue on the GitHub](https://github.com/USDA-VS/vSNP3/issues) or [email](mailto:tod.p.stuber@usda.gov) directly.
 
-For more information or support, please open an issue on the GitHub repository.
+If vSNP3 is used please [cite this article](https://bmcgenomics.biomedcentral.com/articles/10.1186/s12864-024-10437-5).
