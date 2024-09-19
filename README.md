@@ -83,17 +83,41 @@ vsnp3_step2.py -h
    ```
 
 3. Run test with AF2122 (Mycobacterium bovis):
-   - Step 1:
+   - Step 1: <br>
+    Input: FASTQ files for a single sample
      ```bash
      cd ~/vsnp3_test_dataset/AF2122_test_files/step1
      vsnp3_step1.py -r1 *_R1*.fastq.gz -r2 *_R2*.fastq.gz -t Mycobacterium_AF2122
      ```
-   - Step 2:
+   - Step 2: <br>
+    Input: "_zc.vcf" files that have been generated from the same reference type
      ```bash
      cd ~/vsnp3_test_dataset/AF2122_test_files/step2
      vsnp3_step2.py -a -t Mycobacterium_AF2122
      ```
      **Note:** "_zc.vcf" files from step 1 are used in step 2.  These "_zc.vcf" contain positions with Zero Coverage.
+
+4. Output:
+
+Step 1 file structure:
+    ![image info](./docs/img/step1_file_structure.png "Step 1 file structure")
+
+Step 1 alignment metrics:
+    ![image info](./docs/img/step1_stats.png "Step 1 alignment metrics")
+*Artifically wrapped rows*
+  
+Step 2 file structure:
+    ![image info](./docs/img/step2_file_structure.png "Step 2 file structure")
+
+Step 2 tree:
+
+<img src="./docs/img/step2_figtree.png" alt="Step 2 tree" style="height: 215px; width:318px;"/>
+
+Step 2 corresponding SNP matrix:
+
+<img src="./docs/img/step2_table.png" alt="Step 2 corresponding SNP matrix" style="height: 350px; width752px;"/>
+
+**Note:** Sample order in tree corresponds to sample order in table.  Also, for each sample the nodes and branch lengths are relative to SNPs in table.
 
 ## Script detail
 
@@ -103,7 +127,7 @@ vSNP3 is divided into two main steps:
 
 Main entry: `vsnp3_step1.py`
 
-Additional scripts:
+Scripts used by step 1:
 - vsnp3_alignment_vcf.py
 - vsnp3_assembly.py
 - vsnp3_best_reference_sourmash.py
@@ -116,7 +140,7 @@ Additional scripts:
 
 Main entry: `vsnp3_step2.py`
 
-Additional scripts:
+Scripts used by step 2:
 - vsnp3_fasta_to_snps_table.py
 - vsnp3_group_on_defining_snps.py
 - vsnp3_html_step2_summary.py
