@@ -104,7 +104,16 @@ Step 1 file structure:
 
 Step 1 alignment metrics:
     ![image info](./docs/img/step1_stats.png "Step 1 alignment metrics")
-*Artifically wrapped rows*
+*Artifically wrapped rows*<br>
+**Note:** Highlighted cells
+
+- Sample: Name of the sample
+- Reference: Reference used to align reads and call SNPs
+- Groups: The groups in which the sample will be placed based on defining SNPs
+- Genome with Coverage: Percentage of reference genome that has alignment coverage of sample reads
+- Average Depth: The average depth of read coverage aligned to the reference
+- Ambiguous SNPs: The number of SNPs called with AC=1, indicating a mixed call at a position
+- Quality SNPs: The number of SNPs called with a QUAL greater than 300 and AC=2, indicating a relatively high-quality SNP
   
 Step 2 file structure:
     ![image info](./docs/img/step2_file_structure.png "Step 2 file structure")
@@ -117,11 +126,19 @@ Step 2 corresponding SNP matrix:
 
 <img src="./docs/img/step2_table.png" alt="Step 2 corresponding SNP matrix" style="height: 350px; width752px;"/>
 
-**Note:** Sample order in tree corresponds to sample order in table.  Also, for each sample the nodes and branch lengths are relative to SNPs in table.
+**Note:** The sample order in the tree corresponds to the sample order in the table. Additionally, for each sample, the nodes and branch lengths are relative to the SNPs in the table.
 
 ## Script detail
 
 vSNP3 is divided into two main steps:
+
+### Reference types
+
+Under the Quick Start at #2, adding references was done. Reference types are added to help standardize the references used and to provide structure when adding additional information to the analysis. Although files that steps 1 and 2 rely on can be called each time the scripts are run, it is easier and more stable if they are provided by using a reference type. Each reference type includes at least 4 files:
+- Defining filter Excel file: This file contains defining SNP positions. If a sample contains a defining SNP, it is placed into a group as named in the file. Because every alignment will have positions that are consistently poor, positions can be added at each group. Positions added will not be included in the analysis.  The first column of this file lists positions that will be filtered from all comparisons.
+- Metadata Excel file: A two-column file that will match sample names in column one and update them to names in column two.
+- FASTA: Reference used to align reads.
+- GenBank: Provides annotation.
 
 ### Step 1
 
