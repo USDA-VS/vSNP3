@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.25"
+__version__ = "3.26"
 
 import os
 import subprocess
@@ -141,12 +141,13 @@ class Tree:
 
 class Tables:
 
-    def __init__(self, fasta_alignments=None, df_alignments=None, tree=None, gbk=None, mq=None, write_path=None, groupings_dict=None, table_name=None, debug=False,):
+    def __init__(self, fasta_alignments=None, df_alignments=None, tree=None, gbk=None, mq=None, write_path=None, groupings_dict=None, show_groups=False, table_name=None, debug=False,):
         self.fasta_alignments = fasta_alignments
         self.df_alignments = df_alignments
         self.tree = tree
         self.gbk = gbk
         self.mq = mq
+        self.show_groups = show_groups
         self.debug = debug
         self.st = datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d_%H-%M-%S')
         self.groupings_dict = groupings_dict
@@ -289,10 +290,11 @@ class Tables:
             # df = df.append(pd.Series(name='no annotations'))
             df = pd.concat([df, pd.Series(name='no annotations').to_frame().T])
 
-        # Join the list items in the dictionary values into single strings
-        joined_data = {key: '; '.join(map(str, value)) for key, value in self.group_vcfs_dict.items()}
-        # Make groupings into a new Series from the dictionary of sample names: [list group names]
-        new_series = pd.Series(joined_data)
+        if self.show_groups:
+            # Join the list items in the dictionary values into single strings
+            joined_data = {key: '; '.join(map(str, value)) for key, value in self.group_vcfs_dict.items()}
+            # Make groupings into a new Series from the dictionary of sample names: [list group names]
+            new_series = pd.Series(joined_data)
 
         # Check if 'Grouping' column already exists
         # if 'Grouping' not in df.columns:
@@ -309,7 +311,7 @@ class Tables:
                 # print(f'{column_count} columns > {max_size}, cascade table break {count}')
                 chunck_end += max_size
                 df_split = df.iloc[:, chunk_start:chunck_end]
-                if 'Grouping' not in df.columns:
+                if 'Grouping' not in df.columns and self.show_groups:
                     df_split.insert(0, 'Grouping', new_series)
                 df_split.to_json(f'{self.write_path}/df{count}.json', orient='split')
                 self.excel_formatter(f'{self.write_path}/df{count}.json', f'{self.write_path}/{self.table_name}_{table_type}_table{count}-{self.st}.xlsx')
@@ -319,14 +321,14 @@ class Tables:
             count += 1
             # print(f'Last break {column_count} columns, cascade table break {count}')
             df_split = df.iloc[:, chunk_start:]
-            if 'Grouping' not in df.columns:
+            if 'Grouping' not in df.columns and self.show_groups:
                 df_split.insert(0, 'Grouping', new_series)
             df_split.to_json(f'{self.write_path}/df{count}.json', orient='split')
             self.excel_formatter(f'{self.write_path}/df{count}.json', f'{self.write_path}/{self.table_name}_{table_type}_table{count}-{self.st}.xlsx')
             os.remove(f'{self.write_path}/df{count}.json')
         else: # no break needed
             # Insert the new column at position 1 (right after the sample names column)
-            if 'Grouping' not in df.columns:
+            if 'Grouping' not in df.columns and self.show_groups:
                 df.insert(0, 'Grouping', new_series)
             df.to_json(f'{self.write_path}/df.json', orient='split')
             self.excel_formatter(f'{self.write_path}/df.json', f'{self.write_path}/{self.table_name}_{table_type}_table-{self.st}.xlsx')
@@ -354,20 +356,26 @@ class Tables:
         formatN = wb.add_format({'bg_color': '#E2CFDD'})
         rows, cols = table_df.shape
 
+        #'first_row', 'first_col', 'last_row', and 'last_col'
+        # Careful that row/column locations don't overlap
+        if self.show_groups:
+            start_col = 2
+        else:
+            start_col = 1
+
         ws.set_column(0, 0, 30)
         ws.set_column(1, cols, 2.1)
-        ws.freeze_panes(2, 2)
+        ws.freeze_panes(2, start_col)
         formatannotation = wb.add_format({'font_color': '#0A028C', 'rotation': '-90', 'align': 'top'})
         #set last row
         ws.set_row(rows + 1, cols + 1, formatannotation)
-
-        #'first_row', 'first_col', 'last_row', and 'last_col'
-        # Careful that row/column locations don't overlap
-        start_col = 2  # This is column C
         end_col = cols
 
         ws.conditional_format(rows - 2, start_col, rows - 1, end_col, {'type': 'cell', 'criteria': '<', 'value': 55, 'format': formatlowqual})
-        ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'cell', 'criteria': '==', 'value': 'C$2', 'format': formatnormal})
+        if self.show_groups:
+            ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'cell', 'criteria': '==', 'value': 'C$2', 'format': formatnormal})
+        else:
+            ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'cell', 'criteria': '==', 'value': 'B$2', 'format': formatnormal})
         ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'text', 'criteria': 'containing', 'value': 'A', 'format': formatA})
         ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'text', 'criteria': 'containing', 'value': 'G', 'format': formatG})
         ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'text', 'criteria': 'containing', 'value': 'C', 'format': formatC})
@@ -506,6 +514,7 @@ if __name__ == '__main__':
 
     parser.add_argument('-f', '--fasta', action='store', dest='fasta', required=True, help='Provide an alignment file in FASTA format')
     parser.add_argument('-p', '--parsimonious', action='store_true', dest='parsimonious', help='Only keep parsimonious SNPs from FASTA alignment file.  This is different than the uninformative SNPs removed via vSNP pipeline.  This is to be used when just working with an aligned FASTA file.')
+    parser.add_argument('--show_groups', action='store_true', dest='show_groups', help='Show group names in SNP table')
     parser.add_argument('-n', '--hash_names', action='store_true', dest='hash_names', help='Hash FASTA names to rid of any RAxML illegal characters')
     parser.add_argument('-d', '--debug', action='store_true', dest='debug', help='Optional: Keep debugging files and run without pooling')
     parser.add_argument('-v', '--version', action='version', version=f'{os.path.abspath(__file__)}: version {__version__}')

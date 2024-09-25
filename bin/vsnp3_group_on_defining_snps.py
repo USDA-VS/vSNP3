@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.25"
+__version__ = "3.26"
 
 import os
 import sys
@@ -41,7 +41,7 @@ class bcolors:
 class Group():
     ''' 
     '''
-    def __init__(self, cwd=None, metadata=None, excel_remove=None, gbk_list=None, defining_snps=None, dataframes=None, pickle_file=None, abs_pos=None, group=None, all_vcf=None, find_new_filters=None, no_filters=True, qual_threshold=150, n_threshold=50, mq_threshold=56, hash_groups=None, debug=False):
+    def __init__(self, cwd=None, metadata=None, excel_remove=None, gbk_list=None, defining_snps=None, dataframes=None, pickle_file=None, abs_pos=None, group=None, all_vcf=None, find_new_filters=None, no_filters=True, qual_threshold=150, n_threshold=50, mq_threshold=56, show_groups=False, hash_groups=None, debug=False):
 
         self.qual_threshold = qual_threshold
         self.n_threshold = n_threshold
@@ -50,6 +50,7 @@ class Group():
         self.vcf_bad_list=[]
         filter_all_list=None
         defining_snps_dict = None
+        self.show_groups = show_groups
         self.debug = debug
 
         if cwd == None:
@@ -560,7 +561,7 @@ class Group():
 
     def raxml_table_build(self, group):
         tree = Tree(fasta_alignments=self.group_fasta_dict[group], write_path=f'{self.cwd}/{group}', tree_name=group)
-        tables = Tables(df_alignments=self.group_dataframe_dict[group], tree=tree.newick, gbk=self.annotation_df, mq=self.average_mq_df, write_path=f'{self.cwd}/{group}', groupings_dict=self.groupings_dict, table_name=group, debug=False)
+        tables = Tables(df_alignments=self.group_dataframe_dict[group], tree=tree.newick, gbk=self.annotation_df, mq=self.average_mq_df, write_path=f'{self.cwd}/{group}', groupings_dict=self.groupings_dict, show_groups=self.show_groups, table_name=group, debug=False)
         tables.build_tables()
         self.raxml_version = tree.raxml_version
 
