@@ -10,7 +10,7 @@ If using a Mac, download the Mac distribution:
 wget https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh
 ```
 
-If using a Mac with ARM
+If using Apple's ARM/M chip
 ```
 curl -O https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-arm64.sh
 ```
