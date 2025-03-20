@@ -10,6 +10,11 @@ If using a Mac, download the Mac distribution:
 wget https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh
 ```
 
+If using a Mac with ARM
+```
+curl -O https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-arm64.sh
+```
+
 If using WSL or Linux, download the Linux 64-Bit Installer:
 
 ```
