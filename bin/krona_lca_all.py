@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import os
 import sys
@@ -12,22 +12,27 @@ def force_tax_number(kraken_output):
     target_rows = df[(df[2] == 0) & (df[0] == 'C')]
     mapping = target_rows.iloc[:,-1]
     mapping = mapping.to_frame()
-    mapping = mapping.replace(' |:|', '')
+    # Fixed replacement method - the original syntax is incorrect
+    mapping = mapping.replace({' |:|': ''}, regex=True)
 
-    total_read_count = df.count()[0]
-    classified_no_taxid_count = target_rows.count()[0]
-    unclassified_read_count = df[df[0] == 'U'].count()[0]
+    total_read_count = len(df)
+    classified_no_taxid_count = len(target_rows)
+    unclassified_read_count = len(df[df[0] == 'U'])
     print("--> Total read count: {:,}, Classified reads without taxid: {:,}, {:.1%}, Unclassified reads: {:,}, {:.1%}\n\n" .format(total_read_count, classified_no_taxid_count, classified_no_taxid_count/total_read_count, unclassified_read_count, unclassified_read_count/total_read_count))
 
     corrected_dict = {}
     for ir, row in mapping.itertuples():
         accumulate = {}
-        row = row.replace(' |:|', '')
-        split_row = row.replace(' |:|', '').split()
-        for lca in split_row:
-            taxid, count = lca.split(":")
-            accumulate.setdefault(taxid, [])
-            accumulate[taxid].append(count)
+        # Fixed replacement method
+        row = row.replace(' |:|', '', regex=True) if isinstance(row, str) else row
+        # Check if row is a string before splitting
+        if isinstance(row, str):
+            split_row = row.replace(' |:|', '', regex=True).split()
+            for lca in split_row:
+                if ":" in lca:
+                    taxid, count = lca.split(":")
+                    accumulate.setdefault(taxid, [])
+                    accumulate[taxid].append(count)
             highest_taxid = '0'
             highest_value = 0
             for taxid, value_list in accumulate.items():
@@ -35,23 +40,24 @@ def force_tax_number(kraken_output):
                 if value_sum > highest_value and taxid != '0':
                     highest_taxid = taxid
                     highest_value = value_sum
-        corrected_dict[ir] = highest_taxid
+            corrected_dict[ir] = highest_taxid
 
     corrected_df = pd.DataFrame.from_dict(corrected_dict, orient='index')
-    corrected_df = corrected_df.rename(columns={0: 2})
-    df.update(corrected_df)
+    if not corrected_df.empty:  # Only rename if DataFrame is not empty
+        corrected_df = corrected_df.rename(columns={0: 2})
+        df.update(corrected_df)
 
     krona_input = df[[1, 2]]
     krona_input.to_csv("kronaInput.txt", sep='\t', index=False, header=False)
 
-    updated_df_count = df[(df[2] == 0) & (df[0] == 'C')].count()[0]
+    updated_df_count = len(df[(df[2] == 0) & (df[0] == 'C')])
     print("Classified reads without taxid after update: {}\n" .format(updated_df_count))
 
 if __name__ == "__main__": # execute if directly access by the interpreter
     parser = argparse.ArgumentParser(prog='PROG', formatter_class=argparse.RawDescriptionHelpFormatter, description=textwrap.dedent('''\
 
         ---------------------------------------------------------
-        2018-08-17
+        2018-08-17 (Updated for Python 3.12)
         For use with Kraken2
         
         Input: Kraken ouput file

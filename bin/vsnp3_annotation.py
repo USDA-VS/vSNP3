@@ -1,6 +1,6 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
-__version__ = "3.26"
+__version__ = "3.27"
 
 import os
 import shutil
@@ -124,8 +124,8 @@ class Annotation():
                             rbc = self.gbk_dict[chrom].seq[left:right]
                             if part.strand == -1: # Reverse complement
                                 rbc = rbc.reverse_complement()
-                                nucleotide_seq = Seq(snp_nt)
-                                snp_nt = str(nucleotide_seq.reverse_complement())
+                                nucleotide_seq = Seq(snp_nt) if snp_nt is not None else None
+                                snp_nt = str(nucleotide_seq.reverse_complement()) if nucleotide_seq is not None else None
                                 self.direction = "reverse gene"
                                 block = True
                                 if nt_index_aa == 0:
@@ -133,23 +133,24 @@ class Annotation():
                                     block = False
                                 elif nt_index_aa == 2 and block == True:
                                     nt_index_aa = 0
-                            rbc_list = list(rbc)
+                            rbc_list = list(str(rbc))  # Convert Bio.Seq to string first
                             self.reference_base_code = "".join(rbc_list)
                             try:
                                 self.ref_aa = self.aa_code[self.reference_base_code]
                             except KeyError:
                                 self.ref_aa = 'unfound_ref_AA'
                             #change rbc_list to represent SNP
-                            rbc_list[nt_index_aa] = snp_nt
-                            # Example snp_dictionary: SNP at abs pos, {'NC_017250.1:264518': 'T', ...}
-                            try:
-                                self.snp_base_code = "".join(rbc_list)
+                            if snp_nt is not None:
+                                rbc_list[nt_index_aa] = snp_nt
+                                # Example snp_dictionary: SNP at abs pos, {'NC_017250.1:264518': 'T', ...}
                                 try:
-                                    self.snp_aa = self.aa_code[self.snp_base_code]
-                                except KeyError:
-                                    self.snp_aa = 'ambiguous'
-                            except TypeError:
-                                self.snp_aa = "SNP nt not provided"
+                                    self.snp_base_code = "".join(rbc_list)
+                                    try:
+                                        self.snp_aa = self.aa_code[self.snp_base_code]
+                                    except KeyError:
+                                        self.snp_aa = 'ambiguous'
+                                except TypeError:
+                                    self.snp_aa = "SNP nt not provided"
                             if self.ref_aa == self.snp_aa:
                                 self.mutation_type = "silent mutation"
                             elif self.snp_aa == "ambiguous":

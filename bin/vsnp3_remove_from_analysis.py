@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.26"
+__version__ = "3.27"
 
 import os
 import sys
@@ -8,6 +8,7 @@ import pandas as pd
 import glob
 import argparse
 import textwrap
+from pathlib import Path
 
 
 class bcolors:
@@ -23,23 +24,34 @@ class bcolors:
 
 class Remove_From_Analysis:
     '''
+    Class to handle removal of samples from analysis based on an Excel file list
     ''' 
     def __init__(self, working_directory='.', excel_remove=None, extension=None):
         if working_directory == '.':
             working_directory = os.getcwd()
-        if list(working_directory)[0] == '/':
+        
+        # Use Path for better path handling
+        working_dir_path = Path(working_directory)
+        if working_dir_path.is_absolute():
             print(f'working directory: {working_directory}')
         else:
             print(f'##### PROVIDE A FULL PATH')
             print(f'directory given: "{working_directory}"')
             sys.exit(0)
 
-        df = pd.read_excel(excel_remove, index_col=0, usecols=[0], header=None)
-        remove_list=[]
-        for each_sample in df.index:
-            remove_list.append(f'{working_directory}/{each_sample}') #if .vcf is supplied with the sample name in remove_from_analysis.xlsx
-            remove_list.append(f'{working_directory}/{each_sample}.{extension}') #most common behavior if sample name without extension is provided in remove_from_analysis.xlsx
-            remove_list.append(f'{working_directory}/{each_sample}_zc.{extension}') #allow _zc to not be specified in remove_from_analysis.xlsx
+        # Updated pandas read_excel approach
+        # Read the first column with no header
+        df = pd.read_excel(excel_remove, header=None, names=['sample'])
+        
+        remove_list = []
+        for each_sample in df['sample']:
+            # Convert to string in case there are non-string values
+            each_sample = str(each_sample)
+            # Use Path for path joining rather than string concatenation
+            remove_list.append(str(working_dir_path / each_sample))  # If .vcf is supplied with the sample name
+            remove_list.append(str(working_dir_path / f"{each_sample}.{extension}"))  # Most common behavior
+            remove_list.append(str(working_dir_path / f"{each_sample}_zc.{extension}"))  # Allow _zc to not be specified
+            
         self.excel_remove = excel_remove
         self.remove_list = remove_list
 
@@ -68,7 +80,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     File names listed in the first column of the remove_from_analysis.xlsx can have extension, or the extension will be added (default .vcf).  Also _zc.vcf will be looked for and removed.
     '''), epilog='''---------------------------------------------------------''')
     
-    parser.add_argument('-r', '--excel_remove', action='store', dest='excel_remove', required=True, help='Excel file containing samples to remove from analysisColumn 1: to match sample name minus extension.No header allowed')
+    parser.add_argument('-r', '--excel_remove', action='store', dest='excel_remove', required=True, help='Excel file containing samples to remove from analysis. Column 1: to match sample name minus extension. No header allowed')
     parser.add_argument('-w', '--cwd', action='store', dest='working_directory', required=False, default='.', help='Optional: path to VCF files')
     parser.add_argument('-e', '--extension', action='store', dest='extension', required=False, default="vcf", help='File extension type to be renamed')
     parser.add_argument('-v', '--version', action='version', version=f'{os.path.abspath(__file__)}: version {__version__}')

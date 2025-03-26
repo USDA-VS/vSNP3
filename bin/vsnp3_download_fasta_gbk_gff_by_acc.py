@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.26"
+__version__ = "3.27"
 
 import os
 import argparse

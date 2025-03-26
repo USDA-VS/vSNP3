@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.26"
+__version__ = "3.27"
 
 import os
 import subprocess
@@ -9,7 +9,6 @@ import glob
 import argparse
 import textwrap
 
-from pandas.core.indexes.base import Index
 import humanize
 
 from vsnp3_file_setup import Setup
@@ -21,7 +20,7 @@ from vsnp3_file_setup import Excel_Stats
 
 class FASTQ_Container:
     #Provide nested dot notation to object for each read with stats, fq.read1.fastq --> 'sample_S25_L001_R1.fastq.gz'
-    def __init__(self, file_name, file_size, read_format, seq_type, num_seqs, sum_len, min_len, avg_len, max_len, Q1, Q2, Q3, sum_gap, N50, passQ20, passQ30, read_quality_average,):
+    def __init__(self, file_name, file_size, read_format, seq_type, num_seqs, sum_len, min_len, avg_len, max_len, Q1, Q2, Q3, sum_gap, N50, passQ20, passQ30, read_quality_average):
         self.file_name = file_name
         self.file_size = file_size
         self.read_format = read_format
@@ -41,13 +40,13 @@ class FASTQ_Container:
         self.read_quality_average = read_quality_average
         # self.base_quality_average = base_quality_average
 
+
 class FASTQ_Stats(Setup):
-    ''' 
-    '''
+    ''' Class to calculate and store FASTQ statistics using seqkit '''
     def __init__(self, SAMPLE_NAME=None, FASTQ_R1=None, FASTQ_R2=None, debug=False):
         Setup.__init__(self, SAMPLE_NAME=SAMPLE_NAME, FASTQ_R1=FASTQ_R1, FASTQ_R2=FASTQ_R2, debug=debug)
 
-    def run(self,):
+    def run(self):
         for arg_read_name, actual_file in self.FASTQ_dict.items():
             file_size = humanize.naturalsize(os.path.getsize(actual_file))
             subprocess.run(["seqkit", "stats", "-a", "-o", "temp_fastq_seqkit_stats.txt", actual_file], stderr=subprocess.DEVNULL)
@@ -80,7 +79,7 @@ class FASTQ_Stats(Setup):
 
             # Average read quality - not normalized on length
             cmd = f'seqkit fx2tab {actual_file} -l -q -n -i -H | ' + r"awk '{sum+=$3} END{print sum/(NR-1)}'"
-            ps = subprocess.Popen(cmd,shell=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+            ps = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             output = ps.communicate()[0]
             read_quality_average = output.decode("utf-8").strip()
 
@@ -91,7 +90,7 @@ class FASTQ_Stats(Setup):
             # base_quality_average = output.decode("utf-8").strip()
             # print(f'base_quality_average: {base_quality_average}')
 
-            container = FASTQ_Container(file_name, file_size, read_format, seq_type, num_seqs, sum_len, min_len, avg_len, max_len, Q1, Q2, Q3, sum_gap, N50, passQ20, passQ30, read_quality_average,)
+            container = FASTQ_Container(file_name, file_size, read_format, seq_type, num_seqs, sum_len, min_len, avg_len, max_len, Q1, Q2, Q3, sum_gap, N50, passQ20, passQ30, read_quality_average)
             read = arg_read_name.replace('FASTQ_', '')
             setattr(self, read, container)
             if len(self.FASTQ_dict) == 1:
@@ -100,7 +99,7 @@ class FASTQ_Stats(Setup):
     def latex(self, tex):
         try:
             self.FASTQ_R2
-        except NameError:
+        except AttributeError:
             self.FASTQ_R2 = None
         blast_banner = Banner("FASTQ Quality")
         print(r'\begin{table}[ht!]', file=tex)
@@ -127,9 +126,9 @@ class FASTQ_Stats(Setup):
             print(f'Mean Read Score & {float(self.R1.read_quality_average):0.1f} & N/A \\\\', file=tex)
             print(f'Average Read Length & {self.R1.avg_len} & N/A \\\\', file=tex)
         print(r'\hline', file=tex)
+        print(r'\end{tabular}', file=tex)
         print(r'\end{adjustbox}', file=tex)
         print(r'\vspace{0.1 mm}', file=tex)
-        print(r'\end{tabular}', file=tex)
         print(r'\\', file=tex)
         print(r'\end{table}', file=tex)
     

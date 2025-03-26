@@ -1,14 +1,17 @@
 #!/usr/bin/env python
 
-__version__ = "3.26"
+__version__ = "3.27"
 
 import os
 import sys
+import subprocess
 import shutil
 import glob
 import re
 import argparse
 import textwrap
+import importlib.metadata
+import platform
 
 from vsnp3_file_setup import Setup
 from vsnp3_file_setup import bcolors
@@ -104,7 +107,7 @@ class vSNP3_Step1(Setup):
             fasta_name=[]
             for each in FASTAs:
                 basenames.append(os.path.basename(each))
-                fasta_name.append(re.sub('\..*', '', os.path.basename(each)))
+                fasta_name.append(re.sub(r'\..*', '', os.path.basename(each)))
             self.excel_stats.excel_dict["FASTA/s"] = ", ".join(basenames)
             #concatenate FASTA list
             concatenated_TEMP = f'{"_".join(fasta_name)}.temp'
@@ -283,12 +286,6 @@ if __name__ == "__main__": # execute if directly access by the interpreter
         args.FASTQ_R2 = fasta_to_paired_fastq.fastq_r2_file
         print(f'Conversion to FASTQ completed')
 
-    program_list = ['Python', 'Bio', 'numpy', 'pandas', 'scipy',]
-    python_programs = []
-    for name, module in sorted(sys.modules.items()): 
-        if hasattr(module, '__version__') and name in program_list: 
-            python_programs.append(f'{name}, {module.__version__}')
-
     if args.output_dir:
         output_dir = args.output_dir
         output_dir = os.path.expanduser(output_dir)
@@ -303,20 +300,298 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     vsnp = vSNP3_Step1(SAMPLE_NAME=args.SAMPLE_NAME, FASTQ_R1=args.FASTQ_R1, FASTQ_R2=args.FASTQ_R2, FASTA=args.FASTA, gbk=args.gbk, reference_type=args.reference_type, nanopore=args.nanopore, assemble_unmap=args.assemble_unmap, spoligo=args.spoligo, debug=args.debug)
     vsnp.run()
 
-    with open(f'{vsnp.sample_name}_run_log.txt', 'w') as run_log:
-        print(f'\n{os.path.basename(__file__)} SET ARGUMENTS:', file=run_log)
-        print(args, file=run_log)
-        if args.FASTAtoFASTQ:
-            print(f'Converted FASTA to FASTQ', file=run_log)
-        print('\nCall Summary:', file=run_log)
-        for each in vsnp.alignment_vcf_run_summary:
-            print(each, file=run_log)
-        print('\nVersions:', file=run_log)
-        print(f'vSNP3: {__version__}', file=run_log)
-        for each in python_programs:
-            print(each, file=run_log)
-        for each in vsnp.programs:
-            print(each, file=run_log)
+    def get_system_info():
+        # Get basic system information
+        system_info = []
+        
+        # Operating System details
+        os_name = platform.system()
+        os_version = platform.version()
+        os_release = platform.release()
+        
+        if os_name == "Darwin":  # macOS
+            # Check if running on Apple Silicon (ARM) or Intel
+            arch = platform.machine()
+            cpu_type = "ARM" if arch == "arm64" else "Intel"
+            
+            # Get macOS version details using sw_vers
+            try:
+                mac_version = subprocess.check_output(["sw_vers", "-productVersion"], 
+                                                universal_newlines=True).strip()
+                system_info.append(f"Operating System: macOS {mac_version} ({cpu_type})")
+            except:
+                system_info.append(f"Operating System: macOS {os_version} ({cpu_type})")
+        
+        elif os_name == "Linux":
+            # Get CPU architecture
+            arch = platform.machine()
+            
+            # Try to get Linux distribution info
+            try:
+                # Try reading from /etc/os-release first
+                if os.path.exists('/etc/os-release'):
+                    with open('/etc/os-release', 'r') as f:
+                        lines = f.readlines()
+                        distro_id = ""
+                        distro_version = ""
+                        for line in lines:
+                            if line.startswith('ID='):
+                                distro_id = line.split('=')[1].strip().strip('"')
+                            elif line.startswith('VERSION_ID='):
+                                distro_version = line.split('=')[1].strip().strip('"')
+                        
+                        if distro_id and distro_version:
+                            system_info.append(f"Operating System: Linux {distro_id.capitalize()} {distro_version} ({arch})")
+                        else:
+                            system_info.append(f"Operating System: Linux {os_release} ({arch})")
+                else:
+                    # Fallback to lsb_release if available
+                    lsb_output = subprocess.check_output(["lsb_release", "-ds"], 
+                                                    universal_newlines=True).strip()
+                    system_info.append(f"Operating System: {lsb_output} ({arch})")
+            except:
+                # Fallback to basic platform info
+                system_info.append(f"Operating System: Linux {os_release} ({arch})")
+                
+            # Check if running on HPC (look for typical HPC indicators)
+            try:
+                # Check for common HPC environment variables or files
+                if any(os.environ.get(var) for var in ['SLURM_JOB_ID', 'PBS_JOBID', 'SGE_TASK_ID']):
+                    hpc_type = "Unknown HPC"
+                    if os.environ.get('SLURM_JOB_ID'):
+                        hpc_type = "SLURM"
+                    elif os.environ.get('PBS_JOBID'):
+                        hpc_type = "PBS/Torque"
+                    elif os.environ.get('SGE_TASK_ID'):
+                        hpc_type = "SGE"
+                    
+                    system_info.append(f"HPC Environment: {hpc_type}")
+            except:
+                pass
+        
+        elif os_name == "Windows":
+            win_version = platform.win32_ver()[0]
+            arch = platform.machine()
+            system_info.append(f"Operating System: Windows {win_version} ({arch})")
+        
+        else:
+            # Generic fallback
+            system_info.append(f"Operating System: {os_name} {os_version} ({platform.machine()})")
+        
+        # CPU information
+        try:
+            import cpuinfo
+            cpu_info = cpuinfo.get_cpu_info()
+            system_info.append(f"CPU: {cpu_info['brand_raw']} ({cpu_info['count']} cores)")
+        except:
+            # Fallback CPU info if py-cpuinfo is not available
+            try:
+                if os_name == "Linux":
+                    with open('/proc/cpuinfo', 'r') as f:
+                        cpu_lines = f.readlines()
+                    model_name = "Unknown"
+                    cpu_count = 0
+                    
+                    for line in cpu_lines:
+                        if line.startswith('model name'):
+                            model_name = line.split(':')[1].strip()
+                        if line.startswith('processor'):
+                            cpu_count += 1
+                    
+                    system_info.append(f"CPU: {model_name} ({cpu_count} cores)")
+                elif os_name == "Darwin":
+                    sysctl_output = subprocess.check_output(["sysctl", "-n", "machdep.cpu.brand_string"], 
+                                                        universal_newlines=True).strip()
+                    cpu_count = subprocess.check_output(["sysctl", "-n", "hw.ncpu"], 
+                                                    universal_newlines=True).strip()
+                    system_info.append(f"CPU: {sysctl_output} ({cpu_count} cores)")
+                else:
+                    system_info.append(f"CPU: {platform.processor()}")
+            except:
+                system_info.append(f"CPU: {platform.processor()}")
+        
+        return system_info
+
+    # The rest of your existing code
+    program_list = [
+        'bcftools', 'biopython', 'bwa', 'minimap2', 'cairosvg', 
+        'dask', 'freebayes', 'humanize', 'numpy', 'pandas', 'openpyxl', 
+        'xlsxwriter', 'parallel', 'pigz', 'regex', 'samtools', 'seqkit', 
+        'sourmash', 'spades', 'svgwrite', 'py-cpuinfo'
+    ]
+
+    # Dictionary for module name mapping (conda/pip name to import name)
+    module_mapping = {
+        'biopython': 'Bio',
+        'numpy': 'numpy',
+        'pandas': 'pandas',
+        'openpyxl': 'openpyxl',
+        'xlsxwriter': 'xlsxwriter',
+        'regex': 're',
+        'py-cpuinfo': 'cpuinfo',
+        'cairosvg': 'cairosvg',
+        'dask': 'dask',
+        'humanize': 'humanize',
+        'svgwrite': 'svgwrite'
+    }
+
+    # Check if running in a conda environment
+    conda_env = os.environ.get('CONDA_DEFAULT_ENV')
+
+    # List to store program versions
+    python_programs = []
+
+    # Get system information
+    system_info = get_system_info()
+
+    # Get Python version with source info
+    python_source = "(system)"
+    try:
+        conda_output = subprocess.check_output(["conda", "list", "python"], 
+                                            stderr=subprocess.STDOUT, 
+                                            universal_newlines=True)
+        if "python" in conda_output:
+            python_source = "(conda)"
+    except:
+        pass
+    python_programs.append(f'Python, {sys.version.split()[0]} {python_source}')
+
+    # Check all programs
+    for program in program_list:
+        version = "nd"  # Default to "nd" (no data)
+        source = ""
+        
+        # First try conda
+        try:
+            conda_output = subprocess.check_output(["conda", "list", program], 
+                                                stderr=subprocess.STDOUT, 
+                                                universal_newlines=True)
+            # Extract version from conda output
+            lines = conda_output.strip().split('\n')
+            for line in lines:
+                if program in line and not line.startswith('#'):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        version = parts[1]  # Version is typically the second column
+                        source = "(conda)"
+                        break
+            # If we found the version in conda, add it to our list and continue to next program
+            if version != "nd":
+                python_programs.append(f'{program}, {version} {source}')
+                continue
+        except:
+            pass
+        
+        # If not found in conda, check Python modules
+        if program in module_mapping:
+            module_name = module_mapping[program]
+            try:
+                # Try importlib.metadata first
+                try:
+                    version = importlib.metadata.version(program)
+                except (importlib.metadata.PackageNotFoundError, ModuleNotFoundError):
+                    # Fall back to module's __version__ attribute
+                    if module_name in sys.modules and hasattr(sys.modules[module_name], '__version__'):
+                        version = sys.modules[module_name].__version__
+                    elif module_name not in sys.modules:
+                        # Try to import the module
+                        try:
+                            module = __import__(module_name)
+                            if hasattr(module, '__version__'):
+                                version = module.__version__
+                        except ImportError:
+                            pass
+                # If we found the version, add it and continue
+                if version != "nd":
+                    source = "(system)"
+                    python_programs.append(f'{program}, {version} {source}')
+                    continue
+            except Exception:
+                pass
+        
+        # Finally, check command-line programs
+        if shutil.which(program):
+            try:
+                # Different programs report versions differently
+                if program in ['bcftools', 'samtools', 'bwa']:
+                    cmd_output = subprocess.check_output([program, "--version"], 
+                                                    stderr=subprocess.STDOUT, 
+                                                    universal_newlines=True)
+                    version = cmd_output.strip().split('\n')[0].split(' ')[1]
+                elif program in ['minimap2', 'spades.py', 'seqkit']:
+                    cmd_output = subprocess.check_output([program, "--version"], 
+                                                    stderr=subprocess.STDOUT, 
+                                                    universal_newlines=True)
+                    version = cmd_output.strip()
+                elif program == 'freebayes':
+                    cmd_output = subprocess.check_output([program, "--version"], 
+                                                    stderr=subprocess.STDOUT, 
+                                                    universal_newlines=True)
+                    version = cmd_output.strip().split(',')[0].split(' ')[-1]
+                elif program in ['pigz', 'parallel']:
+                    cmd_output = subprocess.check_output([program, "--version"], 
+                                                    stderr=subprocess.STDOUT, 
+                                                    universal_newlines=True)
+                    version = cmd_output.strip().split('\n')[0]
+                
+                if version != "nd":
+                    source = "(system)"
+                    python_programs.append(f'{program}, {version} {source}')
+            except Exception:
+                pass
+
+    # Write to log file
+    try:
+        with open(f'{vsnp.sample_name}_run_log.txt', 'w') as run_log:
+            print(f'\n{os.path.basename(__file__)} SET ARGUMENTS:', file=run_log)
+            print(args, file=run_log)
+            
+            if args.FASTAtoFASTQ:
+                print(f'Converted FASTA to FASTQ', file=run_log)
+            
+            print('\nCall Summary:', file=run_log)
+            for each in vsnp.alignment_vcf_run_summary:
+                print(each, file=run_log)
+            
+            print('\nSystem Information:', file=run_log)
+            for info in system_info:
+                print(info, file=run_log)
+            
+            print('\nVersions:', file=run_log)
+            
+            # Display conda environment info if applicable
+            if conda_env:
+                print(f'Using conda environment: {conda_env}', file=run_log)
+            
+            print(f'vSNP3: {__version__}', file=run_log)
+            
+            for each in python_programs:
+                print(each, file=run_log)
+            
+            # Skip programs we already reported
+            programs_already_reported = [item.split(',')[0].lower() for item in python_programs]
+            
+            for each in vsnp.programs:
+                # Skip error messages about local variables
+                if each.startswith("Error getting program versions: cannot access local variable"):
+                    continue
+                    
+                program_name = each.split(':')[0].strip() if ':' in each else each.split()[0].strip()
+                if program_name.lower() not in programs_already_reported:
+                    print(each, file=run_log)
+    except Exception as e:
+        print(f"Error writing to log file: {str(e)}")
+        # Fallback to a default filename
+        with open("run_log.txt", 'w') as run_log:
+            print(f'\nSystem Information:', file=run_log)
+            for info in system_info:
+                print(info, file=run_log)
+            
+            print(f'\nVersions:', file=run_log)
+            if conda_env:
+                print(f'Using conda environment: {conda_env}', file=run_log)
+            for each in python_programs:
+                print(each, file=run_log)
 
     temp_dir = './temp'
     if not os.path.exists(temp_dir):

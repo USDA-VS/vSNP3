@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.26"
+__version__ = "3.27"
 
 import os
 import io
@@ -51,9 +51,17 @@ class GroupReporter:
         df['QUAL'] = pd.to_numeric(df['QUAL'], errors='coerce').fillna(0).astype(int)
         
         # Split the INFO column and extract the AC, DP and MQ fields
-        df['AC'] = df['INFO'].apply(lambda x: dict(item.split("=") for item in x.split(";") if "=" in item).get('AC', None))
-        df['DP'] = df['INFO'].apply(lambda x: dict(item.split("=") for item in x.split(";") if "=" in item).get('DP', None))
-        df['MQ'] = df['INFO'].apply(lambda x: dict(item.split("=") for item in x.split(";") if "=" in item).get('MQ', None))
+        # Using a more efficient approach to extract values from INFO column
+        def extract_info_field(info_str, field):
+            try:
+                info_dict = {item.split('=')[0]: item.split('=')[1] for item in info_str.split(';') if '=' in item}
+                return info_dict.get(field, None)
+            except (IndexError, AttributeError):
+                return None
+                
+        df['AC'] = df['INFO'].apply(lambda x: extract_info_field(x, 'AC'))
+        df['DP'] = df['INFO'].apply(lambda x: extract_info_field(x, 'DP'))
+        df['MQ'] = df['INFO'].apply(lambda x: extract_info_field(x, 'MQ'))
         df['AC'] = pd.to_numeric(df['AC'], errors='coerce').fillna(0).astype(int)
         df['DP'] = pd.to_numeric(df['DP'], errors='coerce').fillna(0).astype(int)
         df['MQ'] = pd.to_numeric(df['MQ'], errors='coerce').fillna(0).astype(int)
@@ -81,59 +89,69 @@ class GroupReporter:
                     absolute_positon = str(chrom) + ":" + str(position)
                     try:
                         if str(record.ALT[0]) != "None" and record.AC == AC and len(record.REF) == 1 and record_qual > qual_threshold and record.MQ > MQ:
-                            found_positions.update({absolute_positon: record.REF})
+                            found_positions[absolute_positon] = record.REF
                         if str(record.ALT[0]) != "None" and record.AC == 1 and len(record.REF) == 1 and record_qual > qual_threshold and record.MQ > MQ:
-                            found_positions_mix.update({absolute_positon: record.REF})
-                    except KeyError as e:
+                            found_positions_mix[absolute_positon] = record.REF
+                    except KeyError:
                         pass
                 return filename, found_positions, found_positions_mix
             except (ZeroDivisionError, ValueError, UnboundLocalError, TypeError) as e:
-                return filename, f'see error', {'': ''}, {'': ''}
+                return filename, f'see error', {}, {}
         except (SyntaxError, AttributeError) as e:
             # print(type(e)(str(e) + f'\n### VCF SyntaxError {filename} File Removed'))
             os.remove(filename)
-            return filename, f'see error', {'': ''}, {'': ''}
+            return filename, f'see error', {}, {}
     
     def bin_and_html_table(self, filename, found_positions, found_positions_mix):
+        sample_groups_list = []
+        tablename = os.path.basename(filename)
+        defining_snps = self.defining_snps
+        inverted_defining_snps = self.inverted_defining_snps
+        try:
             sample_groups_list = []
-            tablename = os.path.basename(filename)
-            defining_snps = self.defining_snps
-            inverted_defining_snps = self.inverted_defining_snps
-            try:
-                sample_groups_list = []
-                defining_snp = False
-                for abs_position in list(defining_snps.keys() & (found_positions.keys() | found_positions_mix.keys())): #absolute positions in set union of two list
-                    group = defining_snps[abs_position]
+            defining_snp = False
+            # Using set operations more efficiently
+            defining_positions = set(defining_snps.keys())
+            found_positions_set = set(found_positions.keys())
+            found_positions_mix_set = set(found_positions_mix.keys())
+            
+            # Check intersections with both found position sets
+            matching_positions = defining_positions.intersection(found_positions_set.union(found_positions_mix_set))
+            
+            for abs_position in matching_positions:
+                group = defining_snps[abs_position]
+                sample_groups_list.append(group)
+                if defining_positions.intersection(found_positions_mix_set):
+                    tablename = f'{os.path.basename(filename)} <font color="red">[[MIXED]]</font>'
+                defining_snp = True
+                
+            # Check for inverted defining SNPs
+            inverted_positions = set(inverted_defining_snps.keys())
+            if not inverted_positions.intersection(found_positions_set.union(found_positions_mix_set)):
+                for abs_position in inverted_positions:
+                    group = inverted_defining_snps[abs_position]
                     sample_groups_list.append(group)
-                    if len(list(defining_snps.keys() & found_positions_mix.keys())) > 0:
-                        tablename = f'{os.path.basename(filename)} <font color="red">[[MIXED]]</font>'
                     defining_snp = True
-                if not set(inverted_defining_snps.keys()).intersection(found_positions.keys() | found_positions_mix.keys()):
-                    for abs_position in list(inverted_defining_snps.keys()):
-                        group = inverted_defining_snps[abs_position]
+
+            if not defining_snp:  # extra step to get the group name when there are multiple defining snps for a group
+                for abs_position in defining_positions:
+                    set_abs_position = set(abs_position.split(", "))
+                    is_subset = set_abs_position.issubset(found_positions_set)
+                    if is_subset:
+                        group = defining_snps[abs_position]
                         sample_groups_list.append(group)
-                        defining_snp = True
 
-                if defining_snp is False: # extra step to get the group name when there are mutliple defining snps for a group.
-                    for abs_position in list(defining_snps.keys()):
-                        set_abs_position = set(abs_position.split(", "))
-                        set_found_positions = set(found_positions.keys())
-                        is_subset = set_abs_position.issubset(set_found_positions)
-                        if is_subset:
-                            group = defining_snps[abs_position]
-                            sample_groups_list.append(group)
+            if not sample_groups_list:
+                sample_groups_list = ['No defining SNPs']
+            else:
+                sample_groups_list = sorted(sample_groups_list)
 
-                if len(sample_groups_list) == 0:
-                    sample_groups_list = ['No defining SNPs']
-                else:
-                    sample_groups_list = sorted(sample_groups_list)
-
-            except TypeError:
-                message = f'File TypeError'
-                print(f'{message}: {filename}')
-                sample_groups_list = [f'{message}: {filename}']
-                pass
-            return sample_groups_list
+        except TypeError:
+            message = f'File TypeError'
+            print(f'{message}: {filename}')
+            sample_groups_list = [f'{message}: {filename}']
+            
+        return sample_groups_list
 
     def get_groups(self):
         filename, found_positions, found_positions_mix = self.find_initial_positions(self.vcf)

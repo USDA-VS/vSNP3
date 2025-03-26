@@ -1,6 +1,6 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
-__version__ = "3.26"
+__version__ = "3.27"
 
 import os
 import subprocess
@@ -27,6 +27,7 @@ class Best_Reference(Setup):
         '''
         Setup.__init__(self, SAMPLE_NAME=SAMPLE_NAME, FASTQ_R1=FASTQ_R1)
         self.script_path = os.path.dirname(os.path.realpath(__file__))
+        self.debug = debug
 
     def run(self,):
         self.print_run_time('Best Reference Finding with Sourmash')
@@ -42,56 +43,185 @@ class Best_Reference(Setup):
         all_ref_options = []
         ref_options_file = os.path.abspath(f'{self.script_path}/../dependencies/reference_options_paths.txt')
         self.ref_options_file = ref_options_file
+        
+        # Check if reference options file exists
+        if not os.path.exists(ref_options_file):
+            print(f"Error: Reference options file not found: {ref_options_file}")
+            self.top_header_found = "No Reference Options File Found"
+            self.top_header = "No Reference Options File Found"
+            self.top_fasta = None
+            self.reference_set = None
+            self.top_fasta_header = "No Reference Options File Found"
+            self.sourmash_df = pd.DataFrame()
+            return
+            
+        # Read reference paths
         with open(f'{ref_options_file}', 'r') as dep_paths:
             dependency_paths = [line.strip() for line in dep_paths]
+            
+        # Collect all reference options from the specified paths
         for path in dependency_paths:
-            ref_options = glob.glob(f'{path}/*')
-            all_ref_options = all_ref_options + ref_options
-        all_ref_options = [x for x in all_ref_options if os.path.isdir(x)] #only capture directories
-        self.fasta_list=[]
+            if os.path.exists(path):
+                ref_options = glob.glob(f'{path}/*')
+                all_ref_options = all_ref_options + ref_options
+            else:
+                print(f"Warning: Reference path does not exist: {path}")
+                
+        # Filter to only include directories
+        all_ref_options = [x for x in all_ref_options if os.path.isdir(x)]
+        
+        # Get FASTA files from each reference directory
+        self.fasta_list = []
         for each_path in all_ref_options:
             self.fasta_list.extend(glob.glob(f'{each_path}/*.fasta'))
-        header_dict={}
-        for fasta_path in self.fasta_list: #each available reference/fasta
-            identifiers = [seq_record.description for seq_record in SeqIO.parse(fasta_path, 'fasta')]
-            header_dict[identifiers[0]] = fasta_path
-        subprocess.run(["sourmash", "sketch", "dna", self.FASTQ_R1, ], capture_output=True)
-        subprocess.run(["sourmash", "search", f'{self.FASTQ_R1}.sig', f'{self.script_path}/../dependencies/ref_db.sbt.zip', "-o", f'{self.sample_name}_search.csv', '--threshold=0.001'],)
-        self.sourmash_df = pd.read_csv(f'{self.sample_name}_search.csv')
+            
+        # Create dictionary mapping FASTA headers to file paths
+        header_dict = {}
+        for fasta_path in self.fasta_list:  # each available reference/fasta
+            try:
+                identifiers = [seq_record.description for seq_record in SeqIO.parse(fasta_path, 'fasta')]
+                if identifiers:  # Only add if there are identifiers (file not empty)
+                    header_dict[identifiers[0]] = fasta_path
+            except Exception as e:
+                print(f"Warning: Could not parse FASTA file {fasta_path}: {str(e)}")
+                
+        # Check if FASTQ file exists
+        if not os.path.exists(self.FASTQ_R1):
+            print(f"Error: FASTQ file not found: {self.FASTQ_R1}")
+            self.top_header_found = "FASTQ File Not Found"
+            self.top_header = "FASTQ File Not Found"
+            self.top_fasta = None
+            self.reference_set = None
+            self.top_fasta_header = "FASTQ File Not Found"
+            self.sourmash_df = pd.DataFrame()
+            return
+            
+        # Check if sourmash database exists
+        sourmash_db = f'{self.script_path}/../dependencies/ref_db.sbt.zip'
+        if not os.path.exists(sourmash_db):
+            print(f"Error: Sourmash database not found: {sourmash_db}")
+            self.top_header_found = "Sourmash Database Not Found"
+            self.top_header = "Sourmash Database Not Found"
+            self.top_fasta = None
+            self.reference_set = None
+            self.top_fasta_header = "Sourmash Database Not Found"
+            self.sourmash_df = pd.DataFrame()
+            return
+            
+        # Run sourmash sketch
+        try:
+            sketch_result = subprocess.run(
+                ["sourmash", "sketch", "dna", self.FASTQ_R1],
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            if sketch_result.returncode != 0:
+                print(f"Warning: Sourmash sketch command failed: {sketch_result.stderr}")
+        except Exception as e:
+            print(f"Error running sourmash sketch: {str(e)}")
+            self.top_header_found = "Sourmash Sketch Failed"
+            self.top_header = "Sourmash Sketch Failed"
+            self.top_fasta = None
+            self.reference_set = None
+            self.top_fasta_header = "Sourmash Sketch Failed"
+            self.sourmash_df = pd.DataFrame()
+            return
+            
+        # Run sourmash search
+        try:
+            search_result = subprocess.run(
+                [
+                    "sourmash", 
+                    "search", 
+                    f'{self.FASTQ_R1}.sig', 
+                    sourmash_db,
+                    "-o", 
+                    f'{self.sample_name}_search.csv', 
+                    '--threshold=0.001'
+                ],
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            if search_result.returncode != 0:
+                print(f"Warning: Sourmash search command failed: {search_result.stderr}")
+        except Exception as e:
+            print(f"Error running sourmash search: {str(e)}")
+            self.top_header_found = "Sourmash Search Failed"
+            self.top_header = "Sourmash Search Failed"
+            self.top_fasta = None
+            self.reference_set = None
+            self.top_fasta_header = "Sourmash Search Failed"
+            self.sourmash_df = pd.DataFrame()
+            if os.path.exists(f'{self.FASTQ_R1}.sig'):
+                os.remove(f'{self.FASTQ_R1}.sig')
+            return
+            
+        # Read search results
+        try:
+            if os.path.exists(f'{self.sample_name}_search.csv') and os.path.getsize(f'{self.sample_name}_search.csv') > 0:
+                self.sourmash_df = pd.read_csv(f'{self.sample_name}_search.csv')
+            else:
+                print("Warning: Sourmash search produced no results or empty file")
+                self.sourmash_df = pd.DataFrame()
+        except Exception as e:
+            print(f"Error reading sourmash search results: {str(e)}")
+            self.sourmash_df = pd.DataFrame()
 
         #Force a top hit to a specific reference, ie TB lineages to
         try: 
             self.top_header_found = self.sourmash_df['name'][0].split()[0] # top hit
-        except IndexError:
+        except (IndexError, KeyError):
             self.top_header_found = "No Sourmash Findings"
             self.top_fasta_header = "No Sourmash Findings"
+            
         self.top_header = self.top_header_found #default
-        force_to_tb = ['NZ_CP041790.1', 'CP023623.1', 'CP023635.1', 'CP063804.1', 'NZ_CP022014.1', 'NZ_CP041790.1', 'NZ_CP041803.1', 'NZ_CP041869.1', 'NZ_CP041875.1'] #force non-bovis/caprae lineages to H37
+        
+        # Force non-bovis/caprae lineages to H37
+        force_to_tb = ['NZ_CP041790.1', 'CP023623.1', 'CP023635.1', 'CP063804.1', 'NZ_CP022014.1', 'NZ_CP041790.1', 'NZ_CP041803.1', 'NZ_CP041869.1', 'NZ_CP041875.1']
         if self.top_header_found in force_to_tb:
              self.top_header = 'NC_000962.3'
 
-        force_to_bovis = ['CP016401.1',] #force caprae to bovis
+        # Force caprae to bovis
+        force_to_bovis = ['CP016401.1',]
         if self.top_header_found in force_to_bovis:
              self.top_header = 'NC_002945.4'
 
         self.top_fasta = None #default to no findings
         self.reference_set = None
+        
+        # Find the FASTA file for the top header
         for header, path in header_dict.items(): #headers in each FASTA set a reference.
             if self.top_header in header:
                 self.top_fasta = path
-                self.reference_set = self.top_fasta.split('/')[-2]
+                self.reference_set = os.path.basename(os.path.dirname(self.top_fasta))
+                break
+                
         print(f'\nSample: {self.sample_name}\nTop Sourmash Finding: {self.top_header_found} \nReference Set: {self.reference_set} \nTop reference that is automatically available: {self.top_fasta}\n')
+        
         if not self.top_fasta:
             print(f'Reference not found, Must force reference\n')
             self.top_fasta_header = 'Reference not found: Must force reference'
         else:
-            with open(self.top_fasta) as f:
-                self.top_fasta_header = f.readline()
+            try:
+                with open(self.top_fasta) as f:
+                    self.top_fasta_header = f.readline().strip()
+            except Exception as e:
+                print(f"Error reading top FASTA file: {str(e)}")
+                self.top_fasta_header = 'Error reading reference file'
+        
+        # Create sourmash directory and move results
         dir = 'sourmash'
         if not os.path.exists(dir):
             os.makedirs(dir)
-        shutil.move(f'{self.sample_name}_search.csv', dir)
-        os.remove(f'{self.FASTQ_R1}.sig')
+            
+        if os.path.exists(f'{self.sample_name}_search.csv'):
+            shutil.move(f'{self.sample_name}_search.csv', dir)
+            
+        if os.path.exists(f'{self.FASTQ_R1}.sig'):
+            os.remove(f'{self.FASTQ_R1}.sig')
+            
         print("#############\n")
 
     def latex(self, tex):
@@ -107,27 +237,30 @@ class Best_Reference(Setup):
         print(r'Similarity & ID \\', file=tex)
         print(r'\hline', file=tex)
         count=0
-        if self.sourmash_df.size == 0:
+        
+        if not hasattr(self, 'sourmash_df') or self.sourmash_df.empty:
             print('Sourmash - No Data Output & Sourmash - No Data Output \\\\', file=tex)
         else:
-            for row in self.sourmash_df.itertuples():
-                count+=1
-                if count <= 10:
-                    percetage = f'{row[1]:.1%}'
-                    print(percetage.replace("%", "\%") + ' & ' + row[2].replace("_", "\_") + ' \\\\', file=tex)
-                    print(r'\hline', file=tex)
+            try:
+                for row in self.sourmash_df.itertuples():
+                    count+=1
+                    if count <= 10:
+                        percentage = f'{row[1]:.1%}'
+                        name = row[4].replace("_", "\_") if isinstance(row[2], str) else "Invalid Name"
+                        print(percentage.replace("%", "\%") + ' & ' + name + ' \\\\', file=tex)
+                        print(r'\hline', file=tex)
+            except Exception as e:
+                print(f'Sourmash - Error processing data: {str(e)} & Error \\\\', file=tex)
+                print(r'\hline', file=tex)
+                
         print(r'\end{tabular}', file=tex)
         print(r'\end{adjustbox}', file=tex)
         print(r'\\', file=tex)
         print(r'\end{table}', file=tex)
 
     def excel(self, excel_dict):
-        # count=0
-        # for row in self.sourmash_df.itertuples():
-        #     count+=1
-        #     if count <= 1:
-        #         excel_dict[f'Sourmash Sequence Similarity'] = f'{row[1]:.1%}:{row[2]}'
-        excel_dict[f'Found_Reference_Set'] = f'{self.reference_set}'
+        # Add reference set to Excel dictionary
+        excel_dict[f'Found_Reference_Set'] = f'{self.reference_set if self.reference_set else "None"}'
 
 
 if __name__ == "__main__": # execute if directly access by the interpreter
@@ -200,7 +333,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     print(args)
     print("\n")
 
-    best_reference = Best_Reference(SAMPLE_NAME=args.SAMPLE_NAME, FASTQ_R1=args.FASTQ_R1)
+    best_reference = Best_Reference(SAMPLE_NAME=args.SAMPLE_NAME, FASTQ_R1=args.FASTQ_R1, debug=args.debug)
     best_reference.run()
 
     #Latex report

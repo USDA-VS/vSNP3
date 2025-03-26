@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.26"
+__version__ = "3.27"
 
 import os
 import re
@@ -13,24 +13,28 @@ from vsnp3_annotation import Annotation
 
 class VCF_Annotation():
     ''' 
+    VCF Annotation class for processing and annotating VCF files
     '''
     def __init__(self, gbk_list=None, vcf_file=None,):
 
         annotation = Annotation(gbk_list=gbk_list)
         
-        header_out = open('v_header.csv', 'w+')
-        with open(vcf_file) as fff:
-            for line in fff:
-                if re.search('^#', line):
-                    print(line.strip(), file=header_out)
-        header_out.close()
+        with open('v_header.csv', 'w+') as header_out:
+            with open(vcf_file) as fff:
+                for line in fff:
+                    if re.search('^#', line):
+                        print(line.strip(), file=header_out)
 
-        vcf_df = pd.read_csv(vcf_file, sep='\t', header=None, names=["CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT", "Sample"], comment='#')
-        vcf_df['ABS_POS'] = vcf_df['CHROM'].map(str) + ':' + vcf_df['POS'].map(str)
+        vcf_df = pd.read_csv(vcf_file, sep='\t', header=None, 
+                             names=["CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", 
+                                   "INFO", "FORMAT", "Sample"], 
+                             comment='#')
+        vcf_df['ABS_POS'] = vcf_df['CHROM'].astype(str) + ':' + vcf_df['POS'].astype(str)
         annotation_dict={}
         for index, row in vcf_df.iterrows():
             annotation.run(row['ABS_POS'], row['ALT'])
             annotation_dict[row['ABS_POS']] = f'cds_nt_start={annotation.cds_nt_start};cds_nt_end={annotation.cds_nt_end};gene={annotation.gene};product={annotation.product};aa_residue_pos={annotation.aa_residue_pos};snp_nt={annotation.snp_nt};aa_pos={annotation.aa_pos};reference base code={annotation.reference_base_code};snp_base_code={annotation.snp_base_code};ref_aa={annotation.ref_aa};snp_aa={annotation.snp_aa};mutation_type={annotation.mutation_type}'
+        
         vcf_df = vcf_df.set_index('ABS_POS')
         vcf_df.drop(['ID'], axis=1, inplace=True)
         annotation_df = pd.DataFrame.from_dict(annotation_dict, orient='index', columns=["ID"])
@@ -39,12 +43,15 @@ class VCF_Annotation():
         vcf_df = vcf_df.merge(annotation_df, how='left', left_index=True, right_index=True)
         vcf_df = vcf_df[["CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT", "Sample"]]
         vcf_df.to_csv('v_annotated_body.csv', sep='\t', header=False, index=False)
+        
         cat_files = ['v_header.csv', 'v_annotated_body.csv']
         name = vcf_file.replace('.vcf', '')
+        
         with open(f'{name}_annotated.vcf', "wb") as outfile:
             for cf in cat_files:
                 with open(cf, "rb") as infile:
                     outfile.write(infile.read())
+                    
         os.remove('v_header.csv')
         os.remove('v_annotated_body.csv')
         self.vcf = f'{os.getcwd()}/{name}_annotated.vcf'

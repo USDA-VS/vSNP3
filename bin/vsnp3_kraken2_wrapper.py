@@ -3,17 +3,19 @@
 import os
 import re
 import sys
-import re
 import shutil
 import argparse
 import textwrap
 import numpy as np
 import pandas as pd
 import multiprocessing
-multiprocessing.set_start_method('spawn', True)
+
+# Python 3.12 compatibility - move set_start_method inside if __name__ block
+# to avoid issues with multiprocessing spawning
 
 from krona_lca_all import force_tax_number
 
+__version__ = "3.27"
 
 class Kraken2_Identification:
     ''' 
@@ -52,12 +54,12 @@ class Kraken2_Identification:
         self.FASTQ_list = FASTQ_list
 
         
-    def kraken2_run(self,):
+    def kraken2_run(self):
         db = self.db
         threads = self.threads
         sample_name = self.sample_name
         FASTQ_list = self.FASTQ_list
-        FASTA =  self.FASTA
+        FASTA = self.FASTA
         cwd = self.cwd
         print(f'Kraken2 Running...')
         if len(FASTQ_list) == 2:
@@ -83,7 +85,7 @@ class Kraken2_Identification:
             sys.exit(0)
 
         if self.directory:
-            os.mkdir(self.directory)
+            os.makedirs(self.directory, exist_ok=True)  # Using exist_ok for Python 3.12 compatibility
             shutil.move(report, self.directory)
             shutil.move(output, self.directory)
             report = f'{cwd}/{self.directory}/{sample_name}-reportkraken.txt'
@@ -125,8 +127,14 @@ class Kraken2_Identification:
 
     def bracken(self, report, output):
         os.system(f'bracken -d {self.db} -i {report} -o {self.sample_name}-bracken.txt -r 250')
+        
+        # Updated pandas usage for better compatibility
         df = pd.read_csv(f'{self.sample_name}-bracken.txt', sep='\t')
-        df.to_excel(f'{self.sample_name}-bracken.xlsx', index=False)
+        
+        # Use pandas' ExcelWriter with engine specification for compatibility
+        with pd.ExcelWriter(f'{self.sample_name}-bracken.xlsx', engine='openpyxl') as writer:
+            df.to_excel(writer, index=False)
+            
         os.remove(f'{self.sample_name}-bracken.txt')
         self.bracken_excel = f'{os.getcwd()}/{self.sample_name}-bracken.xlsx'
         if self.directory:
@@ -134,6 +142,8 @@ class Kraken2_Identification:
             self.bracken_excel = f'{os.getcwd()}/{self.directory}/{self.sample_name}-bracken.xlsx'
 
 if __name__ == "__main__": # execute if directly access by the interpreter
+    # Set multiprocessing start method here for Python 3.12 compatibility
+    multiprocessing.set_start_method('spawn', True)
 
     parser = argparse.ArgumentParser(prog='PROG', formatter_class=argparse.RawDescriptionHelpFormatter, description=textwrap.dedent('''\
 

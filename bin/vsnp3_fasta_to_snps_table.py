@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.26"
+__version__ = "3.27"
 
 import os
 import subprocess
@@ -12,7 +12,6 @@ import random
 from datetime import datetime
 import pandas as pd
 import multiprocessing
-multiprocessing.set_start_method('spawn', True)
 from concurrent import futures
 import argparse
 import textwrap
@@ -28,7 +27,7 @@ class Tree:
     def __init__(self, fasta_alignments=None, write_path=None, tree_name=None, debug=False,):
         # Find an optimal compiled version of RAxML in conda
         try:
-            subprocess.call("raxml", stdout=open(os.devnull, 'wb'))
+            subprocess.call("raxml", stdout=subprocess.DEVNULL)
             raxml = "raxml"
         except OSError:
             try:
@@ -141,7 +140,7 @@ class Tree:
 
 class Tables:
 
-    def __init__(self, fasta_alignments=None, df_alignments=None, tree=None, gbk=None, mq=None, write_path=None, groupings_dict=None, show_groups=False, table_name=None, debug=False,):
+    def __init__(self, fasta_alignments=None, df_alignments=None, tree=None, gbk=None, mq=None, write_path=None, groupings_dict=None, show_groups=False, table_name=None, debug=False, sample_coverage_dict=None):
         self.fasta_alignments = fasta_alignments
         self.df_alignments = df_alignments
         self.tree = tree
@@ -151,6 +150,7 @@ class Tables:
         self.debug = debug
         self.st = datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d_%H-%M-%S')
         self.groupings_dict = groupings_dict
+        self.sample_coverage_dict = sample_coverage_dict or {}
                 
         if self.groupings_dict:
             group_vcfs_dict = defaultdict(list) #invert the key, values
@@ -245,7 +245,6 @@ class Tables:
         del row2
         del snp_from_top
         del cascade_order_df
-
         ## Start 2nd cascading table: sort bias to longest continues vertical SNP count per column
         row1 = pd.Series(snp_per_column, tree_order2.columns, name="snp_per_column")
         # get the snp count per column
@@ -273,34 +272,41 @@ class Tables:
         self.write_out_table(cascade_order_df, 'cascade2') #table_type, sorted or cascade, type is labeled on the output Excel file
 
     ###Break and write out table
+    # In Tables class, modify write_out_table method:
     def write_out_table(self, df, table_type=None):
         if hasattr(self.mq, 'abs_pos'):
             df_temp = df.T.reset_index()
             df_temp = df_temp.merge(self.mq)
             df_temp = df_temp.set_index('abs_pos')
             df = df_temp.T
-        # else:
-            # df = df.append(pd.Series(name='no map quality'))
+
         if hasattr(self.gbk, 'abs_pos') and not self.gbk.empty:
             df_temp = df.T.reset_index()
             df_temp = df_temp.merge(self.gbk)
             df_temp = df_temp.set_index('abs_pos')
             df = df_temp.T
         else:
-            # df = df.append(pd.Series(name='no annotations'))
             df = pd.concat([df, pd.Series(name='no annotations').to_frame().T])
 
+        # Add coverage data (only once)
+        if self.sample_coverage_dict:
+            coverage_data = {
+                sample: self.sample_coverage_dict.get(sample, 0.0)
+                for sample in df.index 
+                if sample not in ['root', 'no annotations', 'Average Coverage']
+            }
+            if coverage_data:  # Only add if we have coverage data
+                df['Average Coverage'] = pd.Series(coverage_data)
+
         if self.show_groups:
-            # Join the list items in the dictionary values into single strings
+            # Add grouping information
             joined_data = {key: '; '.join(map(str, value)) for key, value in self.group_vcfs_dict.items()}
-            # Make groupings into a new Series from the dictionary of sample names: [list group names]
             new_series = pd.Series(joined_data)
+            if 'Grouping' not in df.columns:
+                df.insert(0, 'Grouping', new_series)
 
-        # Check if 'Grouping' column already exists
-        # if 'Grouping' not in df.columns:
-        #     df.insert(0, 'Grouping', new_series)
-
-        max_size=10000 #max columns allowed in tables
+        # Continue with existing chunking code...
+        max_size=10000
         count=0
         chunk_start=0
         chunck_end=0
@@ -308,43 +314,49 @@ class Tables:
         if column_count > max_size:
             while column_count > max_size:
                 count += 1
-                # print(f'{column_count} columns > {max_size}, cascade table break {count}')
                 chunck_end += max_size
                 df_split = df.iloc[:, chunk_start:chunck_end]
                 if 'Grouping' not in df.columns and self.show_groups:
                     df_split.insert(0, 'Grouping', new_series)
                 df_split.to_json(f'{self.write_path}/df{count}.json', orient='split')
-                self.excel_formatter(f'{self.write_path}/df{count}.json', f'{self.write_path}/{self.table_name}_{table_type}_table{count}-{self.st}.xlsx')
+                self.excel_formatter(f'{self.write_path}/df{count}.json', 
+                                f'{self.write_path}/{self.table_name}_{table_type}_table{count}-{self.st}.xlsx')
                 os.remove(f'{self.write_path}/df{count}.json')
                 chunk_start += max_size
                 column_count -= max_size
             count += 1
-            # print(f'Last break {column_count} columns, cascade table break {count}')
             df_split = df.iloc[:, chunk_start:]
             if 'Grouping' not in df.columns and self.show_groups:
                 df_split.insert(0, 'Grouping', new_series)
             df_split.to_json(f'{self.write_path}/df{count}.json', orient='split')
-            self.excel_formatter(f'{self.write_path}/df{count}.json', f'{self.write_path}/{self.table_name}_{table_type}_table{count}-{self.st}.xlsx')
+            self.excel_formatter(f'{self.write_path}/df{count}.json', 
+                            f'{self.write_path}/{self.table_name}_{table_type}_table{count}-{self.st}.xlsx')
             os.remove(f'{self.write_path}/df{count}.json')
-        else: # no break needed
-            # Insert the new column at position 1 (right after the sample names column)
+            self.multiple_excel_files = True
+        else:
             if 'Grouping' not in df.columns and self.show_groups:
                 df.insert(0, 'Grouping', new_series)
             df.to_json(f'{self.write_path}/df.json', orient='split')
-            self.excel_formatter(f'{self.write_path}/df.json', f'{self.write_path}/{self.table_name}_{table_type}_table-{self.st}.xlsx')
+            self.excel_formatter(f'{self.write_path}/df.json', 
+                            f'{self.write_path}/{self.table_name}_{table_type}_table-{self.st}.xlsx')
             os.remove(f'{self.write_path}/df.json')
+            self.multiple_excel_files = False
+            if table_type == 'cascade1':
+                self.table_to_tree_path = f'{self.write_path}/{self.table_name}_{table_type}_table-{self.st}.xlsx'
 
     def excel_formatter(self, df_json, write_to, group=None):
+        """Format Excel output with proper styling and conditional formatting."""
         import pandas.io.formats.excel
         pandas.io.formats.excel.header_style = None
-        # sample_path_name = self.sample_path_name
         st = self.st
         table_df = pd.read_json(df_json, orient='split')
-        writer = pd.ExcelWriter(write_to, engine='xlsxwriter',)
+        writer = pd.ExcelWriter(write_to, engine='xlsxwriter')
         writer.book.use_zip64()
         table_df.to_excel(writer, sheet_name='Sheet1')
         wb = writer.book
         ws = writer.sheets['Sheet1']
+
+        # Define formats
         formatA = wb.add_format({'bg_color': '#58FA82'})
         formatG = wb.add_format({'bg_color': '#F7FE2E'})
         formatC = wb.add_format({'bg_color': '#0000FF'})
@@ -354,49 +366,109 @@ class Tables:
         formathighqual = wb.add_format({'font_color': '#000000', 'bg_color': '#FDFEFE'})
         formatambigous = wb.add_format({'font_color': '#C70039', 'bg_color': '#E2CFDD'})
         formatN = wb.add_format({'bg_color': '#E2CFDD'})
-        rows, cols = table_df.shape
+        format_rotation = wb.add_format({})
+        format_rotation.set_rotation(90)
+        formatannotation = wb.add_format({'font_color': '#0A028C', 'rotation': '-90', 'align': 'top'})
+        
+        # Format for integer display in coverage column
+        formatcoverage = wb.add_format({
+            'num_format': '0',  # Integer format
+            'align': 'right'
+        })
 
-        #'first_row', 'first_col', 'last_row', and 'last_col'
-        # Careful that row/column locations don't overlap
+        rows, cols = table_df.shape
+        end_col = cols
+
+        # Set starting column based on whether groups are shown
         if self.show_groups:
             start_col = 2
         else:
             start_col = 1
 
-        ws.set_column(0, 0, 30)
-        ws.set_column(1, cols, 2.1)
+        # Basic column formatting
+        ws.set_column(0, 0, 30)  # Sample name column
+        ws.set_column(1, cols, 2.1)  # Position columns
+
+        # Get Coverage column position if present
+        coverage_col = None
+        if 'Average Coverage' in table_df.columns:
+            coverage_col = table_df.columns.get_loc('Average Coverage') + 1
+            ws.set_column(coverage_col, coverage_col, 4.2)  # Double width for coverage column
+
+        # Freeze panes
         ws.freeze_panes(2, start_col)
-        formatannotation = wb.add_format({'font_color': '#0A028C', 'rotation': '-90', 'align': 'top'})
-        #set last row
+
+        # Set annotation row height
         ws.set_row(rows + 1, cols + 1, formatannotation)
-        end_col = cols
 
-        ws.conditional_format(rows - 2, start_col, rows - 1, end_col, {'type': 'cell', 'criteria': '<', 'value': 55, 'format': formatlowqual})
+        # Apply quality-based formatting (excluding Average Coverage column)
+        format_end_col = coverage_col if coverage_col is not None else end_col
+        ws.conditional_format(rows - 2, start_col, rows - 1, format_end_col - 1,
+                            {'type': 'cell', 'criteria': '<', 'value': 55, 'format': formatlowqual})
+
+        # Apply reference-based formatting (excluding Average Coverage column)
         if self.show_groups:
-            ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'cell', 'criteria': '==', 'value': 'C$2', 'format': formatnormal})
+            ws.conditional_format(2, start_col, rows - 2, format_end_col - 1,
+                                {'type': 'cell', 'criteria': '==', 'value': 'C$2', 'format': formatnormal})
         else:
-            ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'cell', 'criteria': '==', 'value': 'B$2', 'format': formatnormal})
-        ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'text', 'criteria': 'containing', 'value': 'A', 'format': formatA})
-        ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'text', 'criteria': 'containing', 'value': 'G', 'format': formatG})
-        ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'text', 'criteria': 'containing', 'value': 'C', 'format': formatC})
-        ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'text', 'criteria': 'containing', 'value': 'T', 'format': formatT})
-        ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'text', 'criteria': 'containing', 'value': 'S', 'format': formatambigous})
-        ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'text', 'criteria': 'containing', 'value': 'Y', 'format': formatambigous})
-        ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'text', 'criteria': 'containing', 'value': 'R', 'format': formatambigous})
-        ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'text', 'criteria': 'containing', 'value': 'W', 'format': formatambigous})
-        ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'text', 'criteria': 'containing', 'value': 'K', 'format': formatambigous})
-        ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'text', 'criteria': 'containing', 'value': 'M', 'format': formatambigous})
-        ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'text', 'criteria': 'containing', 'value': 'N', 'format': formatN})
-        ws.conditional_format(2, start_col, rows - 2, end_col, {'type': 'text', 'criteria': 'containing', 'value': '-', 'format': formatN})
+            ws.conditional_format(2, start_col, rows - 2, format_end_col - 1,
+                                {'type': 'cell', 'criteria': '==', 'value': 'B$2', 'format': formatnormal})
 
-        format_rotation = wb.add_format({})
-        format_rotation.set_rotation(90)
-        # ws.set_row(0, None, format_rotation)
-        for columnnum, columnname in enumerate(list(table_df.columns)):
-            ws.write(0, columnnum + 1, columnname, format_rotation)
-        formatannotation = wb.add_format({'font_color': '#0A028C', 'rotation': '-90', 'align': 'top'})
-        #set last row
+        # Apply nucleotide-based formatting
+        nucleotides = [
+            ('A', formatA), ('G', formatG), ('C', formatC), ('T', formatT),
+            ('S', formatambigous), ('Y', formatambigous), ('R', formatambigous),
+            ('W', formatambigous), ('K', formatambigous), ('M', formatambigous),
+            ('N', formatN), ('-', formatN)
+        ]
+        
+        for nuc, format_obj in nucleotides:
+            ws.conditional_format(2, start_col, rows - 2, format_end_col - 1,
+                                {'type': 'text',
+                                'criteria': 'containing',
+                                'value': nuc,
+                                'format': format_obj})
+
+        # Write column headers with rotation
+        for col_num, col_name in enumerate(table_df.columns):
+            ws.write(0, col_num + 1, col_name, format_rotation)
+
+        # Handle Average Coverage column
+        coverage_col_name = 'Average Coverage'
+        if coverage_col_name in table_df.columns:
+            coverage_col = table_df.columns.get_loc(coverage_col_name) + 1
+            coverage_data = table_df[coverage_col_name]
+
+            # First, write blank cells for all special rows and the annotation row
+            for row_idx in range(1, rows + 2):  # Include both regular rows and annotation row
+                try:
+                    if row_idx == rows + 1:  # This is the annotation row
+                        ws.write_blank(row_idx, coverage_col, None, wb.add_format({'border': 0}))
+                    else:
+                        row_name = table_df.index[row_idx-1]
+                        if row_name in ['root', 'MQ', 'no annotations']:
+                            ws.write_blank(row_idx, coverage_col, None, wb.add_format({'border': 0}))
+                except IndexError:
+                    ws.write_blank(row_idx, coverage_col, None, wb.add_format({'border': 0}))
+
+            # Then write coverage values for regular rows
+            for row_idx in range(1, rows):
+                row_name = table_df.index[row_idx-1]
+                if row_name not in ['root', 'MQ', 'no annotations']:
+                    try:
+                        value = coverage_data.iloc[row_idx-1]
+                        if pd.notna(value):
+                            # Convert to integer and write
+                            int_value = int(round(float(value)))
+                            ws.write(row_idx, coverage_col, int_value, formatcoverage)
+                        else:
+                            ws.write(row_idx, coverage_col, 'N/A', formatcoverage)
+                    except (IndexError, ValueError, TypeError):
+                        ws.write(row_idx, coverage_col, 'N/A', formatcoverage)
+
+        # Set annotation row
         ws.set_row(rows, 400, formatannotation)
+        
         writer.close()
 
 class Hash_Names:
@@ -451,12 +523,7 @@ class Hash_Names:
         write_out = open(original_tree_names , 'wt')
         write_out.write(entire_file)
         write_out.close()
-        self.original_tree_names = original_tree_names
         return original_tree_names
-
-        if not self.debug:
-            os.remove(self.idtable)
-            os.remove(self.hashed_fasta)
 
 
 class Parsimonious:
@@ -503,6 +570,8 @@ class Parsimonious:
 
 
 if __name__ == '__main__':
+    # Set multiprocessing start method for Python 3.12 compatibility
+    multiprocessing.set_start_method('spawn', force=True)
 
     parser = argparse.ArgumentParser(prog='PROG', formatter_class=argparse.RawDescriptionHelpFormatter, description=textwrap.dedent('''\
         ---------------------------------------------------------

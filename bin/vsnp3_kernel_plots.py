@@ -1,11 +1,12 @@
 #!/usr/bin/env python
 
-__version__ = "3.26"
+__version__ = "3.27"
 
 import os
 import re
 import argparse
 import textwrap
+import subprocess
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -20,31 +21,48 @@ class Kernel_Plot():
         else:
             sample_name = re.sub('[_.].*', '', FASTA)
 
-        run_set = f'snp-dists {FASTA} > distances.tab'
-        os.system(run_set)
+        # Use subprocess instead of os.system for better security and error handling
+        run_set = ["snp-dists", FASTA]
+        try:
+            result = subprocess.run(run_set, capture_output=True, text=True, check=True)
+            with open("distances.tab", "w") as f:
+                f.write(result.stdout)
+        except subprocess.CalledProcessError as e:
+            print(f"Error running snp-dists: {e}")
+            return
 
+        # Use more modern pandas approaches
         df = pd.read_csv("distances.tab", delimiter="\t")
-        os.remove("distances.tab")
-        df = df.iloc[:, 1:] # drop the sample names from the first column
-        df = df.iloc[:-1] #remove last row, which is root.
-        df = df.drop(columns=df.columns[-1]) #remove last column, which is root.
+        if not debug:
+            os.remove("distances.tab")
+        
+        # Drop the sample names from the first column
+        df = df.iloc[:, 1:] 
+        # Remove last row, which is root
+        df = df.iloc[:-1] 
+        # Remove last column, which is root
+        df = df.drop(columns=df.columns[-1]) 
+        
         a = np.array(df)
         n = a.shape[0]
         b = a[np.tril_indices(n)] 
         c = np.array(b)
+        
         if bin_max:
             bin_max = bin_max
         else:
-            bin_max = c.max()
-        bins = list(range(0, bin_max, bin_increment))
+            bin_max = int(c.max())
+            
+        bins = list(range(0, bin_max, int(bin_increment)))
+        
         if histogram:
             plt.hist(c, bins=bins)
             plt.title("histogram")
             plt.savefig(f'{sample_name}_histogram.png')
         else:
-            plt.xlim(xlim_low, (bin_max + 150))
+            plt.xlim(int(xlim_low), (bin_max + 150))
             if xlim_high:
-                plt.xlim(xlim_low, xlim_high)
+                plt.xlim(int(xlim_low), int(xlim_high))
 
             ax = sns.kdeplot(c, fill=False, color='black', linewidth=1)
             ax.set(xlabel='SNP distance', ylabel='Density')
@@ -55,8 +73,12 @@ class Kernel_Plot():
             xs = kdeline.get_xdata()
             ys = kdeline.get_ydata()
             yheight = np.max(ys)
+            
+            # Use color parameter if provided
+            fill_color = color if color else 'blue'
+            
             ax.vlines(median, 0, yheight, color='red', ls=':', label=f'Median: {median}')
-            ax.fill_between(xs, 0, ys, facecolor='blue', alpha=0.3)
+            ax.fill_between(xs, 0, ys, facecolor=fill_color, alpha=0.3)
             ax.legend()
             
             sns.set(style="whitegrid", palette="pastel")
@@ -69,6 +91,7 @@ class Kernel_Plot():
             ax.grid(which='both', axis='both', linewidth=0)
 
             plt.savefig(f'{sample_name}_kernel.png')
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog='PROG', formatter_class=argparse.RawDescriptionHelpFormatter, description=textwrap.dedent('''\
@@ -83,34 +106,22 @@ if __name__ == "__main__":
     parser.add_argument('-yh', '--xlim_high', action='store', dest='xlim_high', default=None, help='Upper limit of the x-axis')
     parser.add_argument('-bm', '--bin_max', action='store', dest='bin_max', default=None, help='Max y length')
     parser.add_argument('-bi', '--bin_increment', action='store', dest='bin_increment', default=100, help='Bin increment for histogram')
-    parser.add_argument('-c', '--color', action='store', dest='color', default='orange', help='Color of the kernel density plot')
+    parser.add_argument('-c', '--color', action='store', dest='color', default='blue', help='Color of the kernel density plot')
     parser.add_argument('-g', '--histogram', action='store_true', dest='histogram', default=False, help='Generate histogram instead of kernel density plot')
     parser.add_argument('-d', '--debug', action='store_true', dest='debug', default=False, help='Keep temp files for debugging')
 
     args = parser.parse_args()
 
-    kernel_plot = Kernel_Plot(FASTA=args.fasta, sample_name=args.sample_name, xlim_low=args.xlim_low, xlim_high=args.xlim_high, bin_max=args.bin_max, bin_increment=args.bin_increment, color=args.color, histogram=args.histogram, debug=args.debug)
-
-    # #Latex report
-    # latex_report = Latex_Report(myclass.sample_name)
-    # myclass.latex(latex_report.tex)
-    # latex_report.latex_ending()
-
-    # #Excel Stats
-    # excel_stats = Excel_Stats(myclass.sample_name)
-    # myclass.excel(excel_stats.excel_dict)
-    # excel_stats.post_excel()
-
-    # temp_dir = './temp'
-    # if not os.path.exists(temp_dir):
-    #     os.makedirs(temp_dir)
-    # files_grab = []
-    # for files in ('*.aux', '*.log', '*tex', '*png', '*out'):
-    #     files_grab.extend(glob.glob(files))
-    # for each in files_grab:
-    #     shutil.move(each, temp_dir)
-
-    # if args.debug is False:
-    #     shutil.rmtree(temp_dir)
+    kernel_plot = Kernel_Plot(
+        FASTA=args.fasta, 
+        sample_name=args.sample_name, 
+        xlim_low=args.xlim_low, 
+        xlim_high=args.xlim_high, 
+        bin_max=args.bin_max, 
+        bin_increment=args.bin_increment, 
+        color=args.color, 
+        histogram=args.histogram, 
+        debug=args.debug
+    )
 
 # Created 2021 by Tod Stuber

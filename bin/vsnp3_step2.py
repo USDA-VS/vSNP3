@@ -1,11 +1,12 @@
 #!/usr/bin/env python
 
-__version__ = "3.26"
+__version__ = "3.27"
 
 import os
 import sys
 import io
 import shutil
+import subprocess
 import re
 import pickle
 import argparse
@@ -18,7 +19,9 @@ from datetime import datetime
 from collections import defaultdict
 from concurrent import futures
 import multiprocessing
-multiprocessing.set_start_method('spawn', True)
+
+# Move set_start_method inside if __name__ == "__main__" to avoid issues with Python 3.12
+# multiprocessing.set_start_method('spawn', True)
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -52,29 +55,33 @@ class VCF_to_DF():
                 vcf, df, vcf_bad_list_temp = self.check_and_fix(vcf)
                 try:
                     self.chrom = df['CHROM'].iloc[0]
-                except TypeError:
+                except (TypeError, AttributeError):
                     pass
                 if df is not None:
                     dataframes[os.path.basename(vcf)] = df
                 self.vcf_bad_list = self.vcf_bad_list + vcf_bad_list_temp
         else:
             print(f'Fixing: Pool processing with {cpu_count} cpus...')
+            # Use context manager for process pool to ensure proper cleanup
             with futures.ProcessPoolExecutor(max_workers=cpu_count) as pool: #ProcessPoolExecutor ThreadPoolExecutor ## process works best for calling on multiple files
                 for vcf, df, vcf_bad_list_temp in pool.map(self.check_and_fix, vcf_list):
                     try:
                         self.chrom = df['CHROM'].iloc[0]
-                    except TypeError:
+                    except (TypeError, AttributeError):
                         pass
                     if df is not None:
                         dataframes[os.path.basename(vcf)] = df
                     self.vcf_bad_list = self.vcf_bad_list + vcf_bad_list_temp
         self.dataframes = dataframes
-        print (f'\n\nDictionary of dataframes to memory runtime: {datetime.now() - self.startTime}\n')
+        print(f'\n\nDictionary of dataframes to memory runtime: {datetime.now() - self.startTime}\n')
         # if write_out: # write out pickle file can be used in downstream applications
         with open('dictionary_of_dataframes.pickle', 'wb') as handle:
             pickle.dump(dataframes, handle, protocol=pickle.HIGHEST_PROTOCOL)
         if not debug:
-            os.remove('dictionary_of_dataframes.pickle')
+            try:
+                os.remove('dictionary_of_dataframes.pickle')
+            except FileNotFoundError:
+                pass
 
     def read_vcf(self, path):
         with open(path, 'r') as f:
@@ -89,9 +96,17 @@ class VCF_to_DF():
         df['QUAL'] = pd.to_numeric(df['QUAL'], errors='coerce').fillna(0).astype(int)
         
         # Split the INFO column and extract the AC, DP and MQ fields
-        df['AC'] = df['INFO'].apply(lambda x: dict(item.split("=") for item in x.split(";") if "=" in item).get('AC', None))
-        df['DP'] = df['INFO'].apply(lambda x: dict(item.split("=") for item in x.split(";") if "=" in item).get('DP', None))
-        df['MQ'] = df['INFO'].apply(lambda x: dict(item.split("=") for item in x.split(";") if "=" in item).get('MQ', None))
+        # Updated to handle malformed data more gracefully
+        def extract_info_field(info_str, field):
+            try:
+                info_dict = dict(item.split("=") for item in info_str.split(";") if "=" in item)
+                return info_dict.get(field, None)
+            except (ValueError, AttributeError):
+                return None
+                
+        df['AC'] = df['INFO'].apply(lambda x: extract_info_field(x, 'AC'))
+        df['DP'] = df['INFO'].apply(lambda x: extract_info_field(x, 'DP'))
+        df['MQ'] = df['INFO'].apply(lambda x: extract_info_field(x, 'MQ'))
         df['AC'] = pd.to_numeric(df['AC'], errors='coerce').fillna(0).astype(int)
         df['DP'] = pd.to_numeric(df['DP'], errors='coerce').fillna(0).astype(int)
         df['MQ'] = pd.to_numeric(df['MQ'], errors='coerce').fillna(0).astype(int)
@@ -110,12 +125,16 @@ class VCF_to_DF():
             try:
                 df = self.read_vcf(vcf)
                 df['abs_pos'] = df['CHROM'] + ':' + df['POS'].astype(str)
-            except:
+            except Exception as e:
                 vcf_bad_list_temp.append(vcf)
-                os.remove(vcf)
+                try:
+                    os.remove(vcf)
+                except FileNotFoundError:
+                    pass
                 df = None
         try:
-            df = df.drop_duplicates(subset=['abs_pos'])
+            if df is not None:
+                df = df.drop_duplicates(subset=['abs_pos'])
         except AttributeError:
             # pass if df is empty, NoneType
             pass
@@ -138,7 +157,7 @@ class VCF_to_DF():
                     line = re.sub('""', '"', line)
                     line = re.sub('"$', '', line)
                     line = re.sub('GQ:PL\t"', 'GQ:PL\t', line)
-                    line = re.sub('[0-9]+\tGT\t.\/.$', '999\tGT:AD:DP:GQ:PL\t1/1:0,80:80:99:2352,239,0', line)
+                    line = re.sub(r'[0-9]+\tGT\t.\/.+', '999\tGT:AD:DP:GQ:PL\t1/1:0,80:80:99:2352,239,0', line)
                     line = re.sub('^"', '', line)
                     if line.startswith('##') and line.endswith('"'):
                         line = re.sub('"$', '', line)
@@ -153,6 +172,7 @@ class VCF_to_DF():
                         print(line, file=write_out)
                     else:
                         print(line, file=write_out)
+        write_out.close()  # Explicitly close the file before renaming
         os.rename(temp_file, vcf)
         os.utime(vcf, times=(initial_file_time_stats.st_mtime, initial_file_time_stats.st_mtime))
 
@@ -236,24 +256,241 @@ class HTML_Summary():
                 print("<br>", file=htmlfile)
 
         try:
+            import platform
+            print("\n<h2>System Information:</h2>", file=htmlfile)
+            
+            # Get OS information
+            os_name = platform.system()
+            os_version = platform.version()
+            os_release = platform.release()
+            
+            # Get architecture information
+            arch = platform.machine()
+            processor = platform.processor()
+            
+            # Print OS information with specific details based on OS type
+            print(f"<b>Operating System:</b> {os_name} {os_release} {os_version}<br>", file=htmlfile)
+            
+            # Get and print detailed OS information based on the OS type
+            if os_name == 'Darwin':  # macOS
+                # Check if ARM (Apple Silicon) or Intel
+                if arch == 'arm64':
+                    cpu_type = "ARM (Apple Silicon)"
+                else:
+                    cpu_type = "Intel"
+                
+                # Get macOS version name
+                mac_ver = platform.mac_ver()
+                macos_version = f"macOS {mac_ver[0]}"
+                
+                print(f"<b>macOS Details:</b> {macos_version}, {cpu_type}<br>", file=htmlfile)
+                
+            elif os_name == 'Linux':
+                # Try to get Linux distribution info
+                try:
+                    import distro
+                    linux_distro = distro.name(pretty=True)
+                except ImportError:
+                    # Fallback if distro module is not available
+                    try:
+                        with open('/etc/os-release') as f:
+                            lines = f.readlines()
+                            for line in lines:
+                                if line.startswith('PRETTY_NAME='):
+                                    linux_distro = line.split('=')[1].strip().strip('"')
+                                    break
+                            else:
+                                linux_distro = "Unknown Linux Distribution"
+                    except:
+                        linux_distro = "Unknown Linux Distribution"
+                
+                # Check for HPC environment
+                is_hpc = False
+                hpc_info = "Unknown"
+                
+                # Check for common HPC environment variables or files
+                hpc_indicators = {
+                    'SLURM_CLUSTER_NAME': 'SLURM',
+                    'PBS_HOME': 'PBS',
+                    'SGE_ROOT': 'SGE',
+                    'LSB_JOBID': 'LSF'
+                }
+                
+                for env_var, hpc_type in hpc_indicators.items():
+                    if env_var in os.environ:
+                        is_hpc = True
+                        hpc_info = f"{hpc_type} HPC environment"
+                        break
+                
+                # If no environment variables found, check for common HPC directories
+                if not is_hpc:
+                    hpc_paths = [
+                        ('/opt/slurm', 'SLURM'),
+                        ('/opt/pbs', 'PBS'),
+                        ('/opt/sge', 'SGE'),
+                        ('/opt/lsf', 'LSF')
+                    ]
+                    
+                    for path, hpc_type in hpc_paths:
+                        if os.path.exists(path):
+                            is_hpc = True
+                            hpc_info = f"{hpc_type} HPC environment"
+                            break
+                
+                if is_hpc:
+                    print(f"<b>Linux Details:</b> {linux_distro}, {hpc_info}<br>", file=htmlfile)
+                else:
+                    print(f"<b>Linux Details:</b> {linux_distro}<br>", file=htmlfile)
+                
+            elif os_name == 'Windows':
+                win_ver = platform.win32_ver()
+                win_edition = win_ver[0]
+                win_build = win_ver[1]
+                print(f"<b>Windows Details:</b> Windows {win_edition} (Build {win_build})<br>", file=htmlfile)
+            
+            # Print CPU architecture information
+            print(f"<b>CPU Architecture:</b> {arch}<br>", file=htmlfile)
+            print(f"<b>Processor:</b> {processor}<br>", file=htmlfile)
+            
+            # Get more detailed CPU information using py-cpuinfo if available
+            try:
+                import cpuinfo
+                cpu_info = cpuinfo.get_cpu_info()
+                print(f"<b>CPU Model:</b> {cpu_info['brand_raw']}<br>", file=htmlfile)
+                print(f"<b>CPU Cores:</b> {cpu_info['count']}<br>", file=htmlfile)
+            except (ImportError, Exception) as e:
+                # Fall back to less detailed information
+                pass
+            
+            print("<hr>", file=htmlfile)
             print("\n<h2>Program versions:</h2>", file=htmlfile)
-            print(f'vSNP3: {__version__}', file=htmlfile)
+            print(f'vSNP3: {__version__} <br>', file=htmlfile)
             print(f'Python: {sys.version} <br>', file=htmlfile)
-            program_list = ['Python', 'Bio', 'numpy', 'pandas', 'scipy',]
-            for name, module in sorted(sys.modules.items()): 
-                if hasattr(module, '__version__') and name in program_list: 
-                    print(f'{name}, {module.__version__} <br>', file=htmlfile)
-            raxml_version = re.sub('This is ', '', raxml_version)
-            raxml_version = re.sub(' released by.*', '', raxml_version)
-            print(f'{raxml_version} <br>', file=htmlfile)
-        except:
-            pass
+            
+            # Define the list of programs to check
+            program_list = [
+                'biopython', 'dask', 'humanize', 'numpy', 'pandas', 'openpyxl', 
+                'xlsxwriter', 'parallel', 'pigz', 'regex', 'py-cpuinfo', 'raxml', 'plotly'
+            ]
+            
+            # Dictionary for module name mapping (conda/pip name to import name)
+            module_mapping = {
+                'python': 'Python',
+                'biopython': 'Bio',
+                'numpy': 'numpy',
+                'pandas': 'pandas',
+                'openpyxl': 'openpyxl',
+                'xlsxwriter': 'xlsxwriter',
+                'regex': 're',
+                'py-cpuinfo': 'cpuinfo',
+                'plotly': 'plotly',
+                'cairosvg': 'cairosvg',
+                'dask': 'dask',
+                'humanize': 'humanize',
+                'svgwrite': 'svgwrite'
+            }
+            
+            # Check if running in a conda environment
+            conda_env = os.environ.get('CONDA_DEFAULT_ENV')
+            if conda_env:
+                print(f'<b>Versions from conda environment: {conda_env}</b> <br>', file=htmlfile)
+            else:
+                print(f'<b>Versions from system installation</b> <br>', file=htmlfile)
+            
+            for program in program_list:
+                version = "nd"  # Default to "nd" (no data)
+                
+                # First try to get the version from conda
+                try:
+                    conda_output = subprocess.check_output(["conda", "list", program], 
+                                                        stderr=subprocess.STDOUT, 
+                                                        universal_newlines=True)
+                    # Extract version from conda output
+                    lines = conda_output.strip().split('\n')
+                    for line in lines:
+                        if program in line and not line.startswith('#'):
+                            parts = line.split()
+                            if len(parts) >= 2:
+                                version = parts[1]  # Version is typically the second column
+                                break
+                except (subprocess.CalledProcessError, FileNotFoundError):
+                    # If conda check fails, try to check via module if applicable
+                    if program in module_mapping:
+                        module_name = module_mapping[program]
+                        try:
+                            if module_name in sys.modules and hasattr(sys.modules[module_name], '__version__'):
+                                version = sys.modules[module_name].__version__
+                            elif module_name not in sys.modules:
+                                # Try to import the module
+                                module = __import__(module_name)
+                                if hasattr(module, '__version__'):
+                                    version = module.__version__
+                        except (ImportError, AttributeError):
+                            pass
+                    
+                    # If still no version, try system command
+                    if version == "nd" and shutil.which(program):
+                        try:
+                            # Different programs report versions differently
+                            if program == 'bcftools' or program == 'samtools' or program == 'bwa':
+                                cmd_output = subprocess.check_output([program, "--version"], 
+                                                                stderr=subprocess.STDOUT, 
+                                                                universal_newlines=True)
+                                version = cmd_output.strip().split('\n')[0].split(' ')[1]
+                            elif program == 'raxml':
+                                cmd_output = subprocess.check_output([program, "-v"], 
+                                                                stderr=subprocess.STDOUT, 
+                                                                universal_newlines=True)
+                                version = cmd_output.strip()
+                                # Process raxml version string as in the original code
+                                version = re.sub('This is ', '', version)
+                                version = re.sub(' released by.*', '', version)
+                            elif program == 'minimap2' or program == 'spades.py' or program == 'seqkit':
+                                cmd_output = subprocess.check_output([program, "--version"], 
+                                                                stderr=subprocess.STDOUT, 
+                                                                universal_newlines=True)
+                                version = cmd_output.strip()
+                            elif program == 'freebayes':
+                                cmd_output = subprocess.check_output([program, "--version"], 
+                                                                stderr=subprocess.STDOUT, 
+                                                                universal_newlines=True)
+                                version = cmd_output.strip().split(',')[0].split(' ')[-1]
+                            elif program == 'pigz' or program == 'parallel':
+                                cmd_output = subprocess.check_output([program, "--version"], 
+                                                                stderr=subprocess.STDOUT, 
+                                                                universal_newlines=True)
+                                version = cmd_output.strip().split('\n')[0]
+                        except (subprocess.CalledProcessError, FileNotFoundError):
+                            pass
+                
+                # Print the version information
+                source = ""
+                if version != "nd":
+                    # Determine if the version came from conda or system
+                    try:
+                        conda_output = subprocess.check_output(["conda", "list", program], 
+                                                            stderr=subprocess.STDOUT, 
+                                                            universal_newlines=True)
+                        if program in conda_output:
+                            source = "(conda)"
+                        else:
+                            source = "(system)"
+                    except:
+                        source = "(system)"
+                
+                print(f'{program}: {version} {source} <br>', file=htmlfile)
+            
+        except Exception as e:
+            print(f"Error checking versions: {str(e)} <br>", file=htmlfile)
 
         print("</body>\n</html>", file=htmlfile)
         htmlfile.close()
 
 
 if __name__ == "__main__": # execute if directly access by the interpreter
+    # Set multiprocessing start method here to be compatible with Python 3.12
+    multiprocessing.set_start_method('spawn', True)
+    
     parser = argparse.ArgumentParser(prog='PROG', formatter_class=argparse.RawDescriptionHelpFormatter, description=textwrap.dedent('''\
 
     ---------------------------------------------------------
@@ -316,6 +553,8 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     parser.add_argument('-group', '--group', action='store', dest='group', required=False, help='Optional: Name a group on defining SNP.  Must be supplied with --abs_pos option')
     parser.add_argument('-hash', '--hash_groups', action='store_true', dest='hash_groups', required=False, help='Optional: The option will run defining snps marked with a # in the defining snps file.  The # is removed and the defining snps are run.')
     parser.add_argument('--show_groups', action='store_true', dest='show_groups', help='Show group names in SNP table')
+    parser.add_argument('-html_tree', '--html_tree', action='store_true', dest='html_tree', help='Optional: Generate HTML tree visualization (automatically enables -dp)')
+    parser.add_argument('-dp', '--dp', action='store_true', dest='dp', help='Optional: Include average depth of coverage in tables')
     parser.add_argument('-d', '--debug', action='store_true', dest='debug', help='Optional: Keep debugging files and run without pooling.  A pickle file will be kept for troubleshooting to be used directly in vsnp3_group_on_defining_snps.py.  This saves processing time')
     parser.add_argument('-v', '--version', action='version', version=f'{os.path.basename(__file__)}: version {__version__}')
     args = parser.parse_args()
@@ -344,7 +583,10 @@ if __name__ == "__main__": # execute if directly access by the interpreter
                 arcname = absname[len(abs_src) + 1:]
                 zf.write(absname, arcname)
         zf.close()
-        shutil.rmtree(src)
+        try:
+            shutil.rmtree(src)
+        except (FileNotFoundError, PermissionError) as e:
+            print(f"Warning: Could not remove directory {src}: {e}")
 
     if args.output_dir:
         wd_vcf_list = []
@@ -360,7 +602,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
         global_working_dir = setup.cwd
 
     starting_files = f'{setup.cwd}/vcf_starting_files'
-    os.makedirs(starting_files)
+    os.makedirs(starting_files, exist_ok=True)
     for each_vcf in wd_vcf_list:
         shutil.copy(each_vcf, starting_files)
 
@@ -421,12 +663,19 @@ if __name__ == "__main__": # execute if directly access by the interpreter
         shutil.copy(args.defining_snps, starting_files) #package with starting files for the record
     zipit(starting_files, starting_files) # zip starting files directory
 
-    group = Group(cwd=global_working_dir, metadata=args.metadata, defining_snps=args.defining_snps, excel_remove=args.remove_by_name, gbk_list=args.gbk, dataframes=vcf_to_df.dataframes, all_vcf=args.all_vcf, find_new_filters=args.find_new_filters, no_filters=args.no_filters, qual_threshold=int(args.qual_threshold), n_threshold=int(args.n_threshold), mq_threshold=int(args.mq_threshold), abs_pos=args.abs_pos, group=args.group, show_groups=args.show_groups, hash_groups=args.hash_groups, debug=args.debug)
+    # Before creating the Group instance, check if html_tree is True and set dp accordingly
+    if args.html_tree:
+        args.dp = True
+
+    group = Group(cwd=global_working_dir, metadata=args.metadata, defining_snps=args.defining_snps, excel_remove=args.remove_by_name, gbk_list=args.gbk, dataframes=vcf_to_df.dataframes, all_vcf=args.all_vcf, find_new_filters=args.find_new_filters, no_filters=args.no_filters, qual_threshold=int(args.qual_threshold), n_threshold=int(args.n_threshold), mq_threshold=int(args.mq_threshold), abs_pos=args.abs_pos, group=args.group, show_groups=args.show_groups, hash_groups=args.hash_groups, html_tree=args.html_tree, dp=args.dp, debug=args.debug)
     vcf_to_df.vcf_bad_list = vcf_to_df.vcf_bad_list + group.vcf_bad_list
 
     setup.print_time()
     HTML_Summary(runtime=setup.run_time, vcf_to_df=vcf_to_df, reference=ro.select_ref, groupings_dict=group.groupings_dict, raxml_version=group.raxml_version, all_vcf_boolen=args.all_vcf, args=args, removed_samples=remove_list) 
     
-    os.remove(notification_file)
-    print(f"Deleted file: {notification_file}")
+    try:
+        os.remove(notification_file)
+        print(f"Deleted file: {notification_file}")
+    except FileNotFoundError:
+        pass
 # Created 2021 by Tod Stuber

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.26"
+__version__ = "3.27"
 
 import os
 import sys
@@ -14,6 +14,8 @@ from collections import defaultdict
 from collections import Counter
 from concurrent import futures
 import multiprocessing
+from multiprocessing import Process, Queue
+import functools
 import time
 from datetime import datetime
 from cpuinfo import get_cpu_info
@@ -25,8 +27,31 @@ from vsnp3_reference_options import Ref_Options
 from vsnp3_fasta_to_snps_table import Tree
 from vsnp3_fasta_to_snps_table import Tables
 from vsnp3_annotation import Annotation
+from vsnp3_html_tree import html_tree
 
 
+# Define wrapper at module level
+def wrapper(queue, func, *args, **kwargs):
+    result = func(*args, **kwargs)
+    queue.put(result)
+
+def run_with_timeout(func, timeout_seconds, *args, **kwargs):
+    queue = Queue()
+    process = Process(
+        target=wrapper,
+        args=(queue, func) + args,
+        kwargs=kwargs
+    )
+    process.start()
+    process.join(timeout=timeout_seconds)
+
+    if process.is_alive():
+        process.terminate()
+        process.join()
+        raise TimeoutError(f"Function took longer than {timeout_seconds} seconds")
+    
+    return queue.get()
+    
 class bcolors:
     PURPLE = '\033[95m'
     BLUE = '\033[94m'
@@ -41,7 +66,7 @@ class bcolors:
 class Group():
     ''' 
     '''
-    def __init__(self, cwd=None, metadata=None, excel_remove=None, gbk_list=None, defining_snps=None, dataframes=None, pickle_file=None, abs_pos=None, group=None, all_vcf=None, find_new_filters=None, no_filters=True, qual_threshold=150, n_threshold=50, mq_threshold=56, show_groups=False, hash_groups=None, debug=False):
+    def __init__(self, cwd=None, metadata=None, excel_remove=None, gbk_list=None, defining_snps=None, dataframes=None, pickle_file=None, abs_pos=None, group=None, all_vcf=None, find_new_filters=None, no_filters=True, qual_threshold=150, n_threshold=50, mq_threshold=56, show_groups=False, hash_groups=None, html_tree=False, dp=False, debug=False):
 
         self.qual_threshold = qual_threshold
         self.n_threshold = n_threshold
@@ -51,7 +76,11 @@ class Group():
         filter_all_list=None
         defining_snps_dict = None
         self.show_groups = show_groups
+        self.html_tree = html_tree
+        self.dp = dp
         self.debug = debug
+        
+        self.sample_coverage_dict = {}
 
         if cwd == None:
             self.cwd = os.getcwd()
@@ -113,38 +142,38 @@ class Group():
                 filter_all_list = self.list_expansion(filter_all_list)
             filter_snps_df = pd.read_excel(defining_snps, header=1)
             group_filter_snps_dict = filter_snps_df.iloc[:, 1:].to_dict(orient='list')
-            group_filter_snps_dict = {k:[elem for elem in v if elem is not np.nan] for k,v in group_filter_snps_dict.items()}
+            group_filter_snps_dict = {k:[elem for elem in v if not pd.isna(elem)] for k,v in group_filter_snps_dict.items()}
             self.group_filter_snps_dict = group_filter_snps_dict
             #get all_vcf column name for labeling group
             all_vcf_column = filter_snps_df.iloc[:, 0:1].to_dict(orient='list')
-            all_vcf_name = [*all_vcf_column][0]
+            all_vcf_name = list(all_vcf_column.keys())[0]
 
         if metadata:
             metadata_test = True
             metadata_df = pd.read_excel(metadata, header=None, index_col=0, usecols=[0, 1], names=['file_name', 'metadata'])
             #for names to match change to string types in case sample name are numbers/int
             metadata_df = metadata_df.reset_index()
-            metadata_df['file_name'] = metadata_df.file_name.astype(str)
-            metadata_df['metadata'] = metadata_df.metadata.astype(str)
+            metadata_df['file_name'] = metadata_df['file_name'].astype(str)
+            metadata_df['metadata'] = metadata_df['metadata'].astype(str)
             #fix metadata tags
-            metadata_df['metadata'] = metadata_df.metadata.replace({'/':'_'}, regex=True)
-            metadata_df['metadata'] = metadata_df.metadata.replace({'\.':'_'}, regex=True)
-            metadata_df['metadata'] = metadata_df.metadata.replace({'\*':'_'}, regex=True)
-            metadata_df['metadata'] = metadata_df.metadata.replace({'\?':'_'}, regex=True)
-            metadata_df['metadata'] = metadata_df.metadata.replace({'\(':'_'}, regex=True)
-            metadata_df['metadata'] = metadata_df.metadata.replace({'\)':'_'}, regex=True)
-            metadata_df['metadata'] = metadata_df.metadata.replace({'\[':'_'}, regex=True)
-            metadata_df['metadata'] = metadata_df.metadata.replace({'\]':'_'}, regex=True)
-            metadata_df['metadata'] = metadata_df.metadata.replace({' ':'_'}, regex=True)
-            metadata_df['metadata'] = metadata_df.metadata.replace({'{':'_'}, regex=True)
-            metadata_df['metadata'] = metadata_df.metadata.replace({'}':'_'}, regex=True)
-            metadata_df['metadata'] = metadata_df.metadata.replace({'-_':'_'}, regex=True)
-            metadata_df['metadata'] = metadata_df.metadata.replace({'_-':'_'}, regex=True)
-            metadata_df['metadata'] = metadata_df.metadata.replace({'--':'_'}, regex=True)
-            metadata_df['metadata'] = metadata_df.metadata.replace({'_$':''}, regex=True)
-            metadata_df['metadata'] = metadata_df.metadata.replace({'-$':''}, regex=True)
-            metadata_df['metadata'] = metadata_df.metadata.replace({"\'": ""}, regex=True)
-            metadata_df['metadata'] = metadata_df.metadata.replace({',':''}, regex=True)
+            metadata_df['metadata'] = metadata_df['metadata'].replace({'/':'_'}, regex=True)
+            metadata_df['metadata'] = metadata_df['metadata'].replace({'\.':'_'}, regex=True)
+            metadata_df['metadata'] = metadata_df['metadata'].replace({'\*':'_'}, regex=True)
+            metadata_df['metadata'] = metadata_df['metadata'].replace({'\?':'_'}, regex=True)
+            metadata_df['metadata'] = metadata_df['metadata'].replace({'\(':'_'}, regex=True)
+            metadata_df['metadata'] = metadata_df['metadata'].replace({'\)':'_'}, regex=True)
+            metadata_df['metadata'] = metadata_df['metadata'].replace({'\[':'_'}, regex=True)
+            metadata_df['metadata'] = metadata_df['metadata'].replace({'\]':'_'}, regex=True)
+            metadata_df['metadata'] = metadata_df['metadata'].replace({' ':'_'}, regex=True)
+            metadata_df['metadata'] = metadata_df['metadata'].replace({'{':'_'}, regex=True)
+            metadata_df['metadata'] = metadata_df['metadata'].replace({'}':'_'}, regex=True)
+            metadata_df['metadata'] = metadata_df['metadata'].replace({'-_':'_'}, regex=True)
+            metadata_df['metadata'] = metadata_df['metadata'].replace({'_-':'_'}, regex=True)
+            metadata_df['metadata'] = metadata_df['metadata'].replace({'--':'_'}, regex=True)
+            metadata_df['metadata'] = metadata_df['metadata'].replace({'_$':''}, regex=True)
+            metadata_df['metadata'] = metadata_df['metadata'].replace({'-$':''}, regex=True)
+            metadata_df['metadata'] = metadata_df['metadata'].replace({"\'": ""}, regex=True)
+            metadata_df['metadata'] = metadata_df['metadata'].replace({',':''}, regex=True)
             
         else:
             metadata_test = False
@@ -229,7 +258,7 @@ class Group():
         mq_averages={}
         for abs_pos, mq_list in map_quality_dict.items():
             mq_averages[abs_pos] = np.mean(mq_list)
-        self.average_mq_df =  pd.DataFrame.from_dict(mq_averages, orient='index')
+        self.average_mq_df = pd.DataFrame.from_dict(mq_averages, orient='index')
         self.average_mq_df = self.average_mq_df.reset_index()
         self.average_mq_df.columns = ['abs_pos', 'MQ']
         if gbk_list:
@@ -360,7 +389,7 @@ class Group():
         group_dataframe_dict={}
         remove_list=[]
         for group, sample_dict in finished_groupings_dict.items():
-            os.mkdir(group)
+            os.makedirs(group, exist_ok=True)
             fasta = f'{group}/{group}-{self.st}.fasta'
             self.dict_to_fasta(sample_dict, fasta)
             num_lines=0
@@ -383,8 +412,9 @@ class Group():
         
         self.group_fasta_dict = group_fasta_dict
         self.group_dataframe_dict = group_dataframe_dict
-        finished_groupings_list = [*finished_groupings_dict]
+        finished_groupings_list = list(finished_groupings_dict.keys())
         working_group_list = [x for x in finished_groupings_list if x not in remove_list]
+        self.calculate_average_coverage()
 
         if debug:
             for group in working_group_list:
@@ -394,7 +424,7 @@ class Group():
                 for tree in pool.map(self.raxml_table_build, working_group_list):
                     pass
 
-        print(f'\n\tFASTAs out and RAxML trees {datetime.now() - self.startTime}\n')
+        print(f'\n\tFASTAs, RAxML and HTML trees {datetime.now() - self.startTime}\n')
         # print(f'\n\nTotal Time: {datetime.now() - self.beginTime}\n')
 
         #Add back those that where a group was not found
@@ -404,13 +434,28 @@ class Group():
         for sample in samples_without_group_set:
             groupings_dict['Group Not Found'][sample] = pd.DataFrame()
         self.groupings_dict = groupings_dict # will be passed to html summary
+        
+    def calculate_average_coverage(self):
+        """Calculate average depth of coverage for each sample, excluding zero values."""
+        for sample, single_df in self.dataframes_names_updated.items():
+            try:
+                # Convert to numeric and exclude zeros
+                coverage_values = pd.to_numeric(single_df['DP'], errors='coerce')
+                # Filter out zeros and NaN values before calculating mean
+                valid_coverage = coverage_values[coverage_values > 0]
+                mean_coverage = valid_coverage.mean()
+                # If all values were zero/NaN, mean_coverage will be NaN
+                self.sample_coverage_dict[sample] = int(round(mean_coverage)) if pd.notna(mean_coverage) else 0
+            except (KeyError, AttributeError):
+                # Handle cases where DP column might not exist
+                self.sample_coverage_dict[sample] = 0
 
     def group_selection(self, abs_pos):
         sample_dict={}
         group_found = False
         abs_pos = abs_pos.split(", ")
         for sample, single_df in self.dataframe_essentials.items():
-            if set(abs_pos).issubset(single_df['abs_pos']): # all positions must be in dataframe column
+            if set(abs_pos).issubset(single_df['abs_pos'].values): # all positions must be in dataframe column
                 group_found = True
                 sample_dict[sample] = self.dataframe_essentials[sample]
             elif "!" in ''.join(abs_pos):
@@ -457,7 +502,12 @@ class Group():
         except pd.errors.InvalidIndexError as e:
             if self.debug:
                 print(f'\n\t#####\n\t##### {e}, Group {group} \n\t#####\n')
+            return pd.DataFrame()
 
+    def make_groupings(self, group_sample_dict):
+        df_list=[]
+        group, sample_dict = group_sample_dict # sample_dict is from dataframe_essentials, ie good SNPs.
+        
     def make_groupings(self, group_sample_dict):
         df_list=[]
         group, sample_dict = group_sample_dict # sample_dict is from dataframe_essentials, ie good SNPs.
@@ -493,7 +543,7 @@ class Group():
                 sample_df.loc[mask, 'ALT'] = sample_df['REF']
             except (ValueError) as e:
                 if self.debug:
-                    print(print(f'\n\t#####\n\t##### {e}, Sample: {sample}\n\t#####\n'))
+                    print(f'\n\t#####\n\t##### {e}, Sample: {sample}\n\t#####\n')
 
             sample_df = sample_df[['abs_pos', 'ALT']] # no longer need other columns
             # sample_df = sample_df.replace(np.nan, '-', regex=True) # change zero coverage to -
@@ -502,7 +552,7 @@ class Group():
             df_merged['ALT'] = df_merged['ALT'].fillna('-')
             
             # df_merged[~sample_df.isin(df_ref)].dropna() #make sure only those position in df_ref are being used | not sure this is needed
-            position_list.extend(list(df_merged['abs_pos'] + list(df_merged['ALT']))) #make position unique on ALT call for parsimony selection
+            position_list.extend(list(df_merged['abs_pos'] + df_merged['ALT'])) #make position unique on ALT call for parsimony selection
             norm_sample_dict[sample] = df_merged[['abs_pos', 'ALT']]
             
             ####
@@ -513,13 +563,13 @@ class Group():
                 sample_df_parse_test.loc[sample_df_parse_test['QUAL'] < self.qual_threshold, 'ALT'] = sample_df_parse_test['ALT'] # change n_threshold from above to qual threshold skipping the Ns when determining if position is parsimonious AND changed to 'ALT'.  So, if there are just a few low quality represented the SNP position will be seen as parisomonious uninformative and removed.
             except (ValueError) as e:
                 if self.debug:
-                    print(print(f'\n\t#####\n\t##### {e}, Sample: {sample}\n\t#####\n'))
+                    print(f'\n\t#####\n\t##### {e}, Sample: {sample}\n\t#####\n')
             sample_df_parse_test = sample_df_parse_test[['abs_pos', 'ALT']] # no longer need other columns
             # sample_df_parse_test = sample_df_parse_test.replace(np.nan, '-', regex=True) # change zero coverage to -
             df_merged_parse_test = sample_df_parse_test.merge(df_ref, left_on='abs_pos', right_on='abs_pos', how='outer') # finish normalizing if df doesn't include all position in group
             df_merged_parse_test['ALT'] = np.where(df_merged_parse_test['ALT'].notna(), df_merged_parse_test['ALT'], df_merged_parse_test['REF']) # merge REF from df_ref to ALT column
             df_merged_parse_test['ALT'] = df_merged_parse_test['ALT'].fillna('-')
-            position_list_parse_test.extend(list(df_merged_parse_test['abs_pos'] + list(df_merged_parse_test['ALT']))) #make position unique on ALT call for parsimony selection
+            position_list_parse_test.extend(list(df_merged_parse_test['abs_pos'] + df_merged_parse_test['ALT'])) #make position unique on ALT call for parsimony selection
             ####
 
         #find parsimonies uninformative positions
@@ -561,44 +611,58 @@ class Group():
 
     def raxml_table_build(self, group):
         tree = Tree(fasta_alignments=self.group_fasta_dict[group], write_path=f'{self.cwd}/{group}', tree_name=group)
-        tables = Tables(df_alignments=self.group_dataframe_dict[group], tree=tree.newick, gbk=self.annotation_df, mq=self.average_mq_df, write_path=f'{self.cwd}/{group}', groupings_dict=self.groupings_dict, show_groups=self.show_groups, table_name=group, debug=False)
+        tables = Tables(
+            df_alignments=self.group_dataframe_dict[group],
+            tree=tree.newick,
+            gbk=self.annotation_df,
+            mq=self.average_mq_df,
+            write_path=f'{self.cwd}/{group}',
+            groupings_dict=self.groupings_dict,
+            show_groups=self.show_groups,
+            table_name=group,
+            debug=False,
+            sample_coverage_dict=self.sample_coverage_dict if self.dp else {}
+        )
         tables.build_tables()
         self.raxml_version = tree.raxml_version
+        # Only run html_tree if the option is specified
+        if self.html_tree:
+            try:
+                run_with_timeout(html_tree, 900, tables.table_to_tree_path)
+            except TimeoutError:
+                print(f'{group} HTML tree generation timed out after 15 minutes')
+        if __name__ == "__main__": # execute if directly access by the interpreter
+            parser = argparse.ArgumentParser(prog='PROG', formatter_class=argparse.RawDescriptionHelpFormatter, description=textwrap.dedent('''\
 
+            ---------------------------------------------------------
+            Usage:
+            vsnp3_group_on_defining_snps.py -p dictionary_of_dataframes.pickle -abs_pos NC_002945.4:1295549 -group test_group -m path/to/metadata.xlsx -b /path/to/*gbk
 
+            '''), epilog='''---------------------------------------------------------''')
 
-if __name__ == "__main__": # execute if directly access by the interpreter
-    parser = argparse.ArgumentParser(prog='PROG', formatter_class=argparse.RawDescriptionHelpFormatter, description=textwrap.dedent('''\
+            parser.add_argument('-p', '--pickle_file', action='store', dest='pickle_file', required=False, help='Pickle file: dictionary of dataframes')
+            parser.add_argument('-b', '--gbk', nargs='*', dest='gbk', required=False, default=None, help='Optional: gbk to annotate VCF file.  Multiple can be specified with wildcard')
+            parser.add_argument('-m', '--metadata', action='store', dest='metadata', default=None, required=False, help='Explicit metadata file.  Two column Excel file --> Column One: VCF file name, Column Two: Updated name')
+            parser.add_argument('-s', '--defining_snps', action='store', dest='defining_snps', required=False, help='Defining SNPs with positions to filter.  See template_define_filter.xlsx')
+            parser.add_argument('-abs_pos', '--abs_pos', action='store', dest='abs_pos', required=False, help='Must be supplied with --group option.  Format as chrom in VCF, likely chrom:10000... NC_002945.4:2138896.  Run: `vsnp3_step2.py --wd ../original -da` to obtain pickle for entire set, isolate pickle file and run `vsnp3_group_on_defining_snps.py -p dictionary_of_dataframes.pickle -a NC_002945.4:1295549`')
+            parser.add_argument('-group', '--group', action='store', dest='group', required=False, help='Must be supplied with --abs_pos option')
+            parser.add_argument('-w', '--qual_threshold', action='store', dest='qual_threshold', default=150, required=False, help='Optional: Minimum QUAL threshold for calling a SNP')
+            parser.add_argument('-x', '--n_threshold', action='store', dest='n_threshold', default=50, required=False, help='Optional: Minimum N threshold.  SNPs between this and qual_threshold are reported as N')
+            parser.add_argument('-y', '--mq_threshold', action='store', dest='mq_threshold', default=56, required=False, help='Optional: At least one position per group must have this minimum MQ threshold to be called.')
+            parser.add_argument('-t', '--reference_type', action='store', dest='reference_type', required=False, help='Reference type group/directory with dependencies')
+            parser.add_argument('-d', '--debug', action='store_true', dest='debug', help='Optional: Keep debugging files and run without pooling')
+            parser.add_argument('-v', '--version', action='version', version=f'{os.path.basename(__file__)}: version {__version__}')
+            args = parser.parse_args()
 
-    ---------------------------------------------------------
-    Usage:
-    vsnp3_group_on_defining_snps.py -p dictionary_of_dataframes.pickle -abs_pos NC_002945.4:1295549 -group test_group -m path/to/metadata.xlsx -b /path/to/*gbk
+            if args.reference_type:
+                ro = Ref_Options(args.reference_type)
+                if ro.metadata and not args.metadata:
+                    args.metadata = ro.metadata
+                if ro.excel and not args.defining_snps:
+                    args.defining_snps = ro.excel
+                if ro.gbk and not args.gbk:
+                    args.gbk = ro.gbk
 
-    '''), epilog='''---------------------------------------------------------''')
-
-    parser.add_argument('-p', '--pickle_file', action='store', dest='pickle_file', required=False, help='Pickle file: dictionary of dataframes')
-    parser.add_argument('-b', '--gbk', nargs='*', dest='gbk', required=False, default=None, help='Optional: gbk to annotate VCF file.  Multiple can be specified with wildcard')
-    parser.add_argument('-m', '--metadata', action='store', dest='metadata', default=None, required=False, help='Explicit metadata file.  Two column Excel file --> Column One: VCF file name, Column Two: Updated name')
-    parser.add_argument('-s', '--defining_snps', action='store', dest='defining_snps', required=False, help='Defining SNPs with positions to filter.  See template_define_filter.xlsx')
-    parser.add_argument('-abs_pos', '--abs_pos', action='store', dest='abs_pos', required=False, help='Must be supplied with --group option.  Format as chrom in VCF, likely chrom:10000... NC_002945.4:2138896.  Run: `vsnp3_step2.py --wd ../original -da` to obtain pickle for entire set, isolate pickle file and run `vsnp3_group_on_defining_snps.py -p dictionary_of_dataframes.pickle -a NC_002945.4:1295549`')
-    parser.add_argument('-group', '--group', action='store', dest='group', required=False, help='Must be supplied with --abs_pos option')
-    parser.add_argument('-w', '--qual_threshold', action='store', dest='qual_threshold', default=150, required=False, help='Optional: Minimum QUAL threshold for calling a SNP')
-    parser.add_argument('-x', '--n_threshold', action='store', dest='n_threshold', default=50, required=False, help='Optional: Minimum N threshold.  SNPs between this and qual_threshold are reported as N')
-    parser.add_argument('-y', '--mq_threshold', action='store', dest='mq_threshold', default=56, required=False, help='Optional: At least one position per group must have this minimum MQ threshold to be called.')
-    parser.add_argument('-t', '--reference_type', action='store', dest='reference_type', required=False, help='Reference type group/directory with dependencies')
-    parser.add_argument('-d', '--debug', action='store_true', dest='debug', help='Optional: Keep debugging files and run without pooling')
-    parser.add_argument('-v', '--version', action='version', version=f'{os.path.basename(__file__)}: version {__version__}')
-    args = parser.parse_args()
-
-    if args.reference_type:
-        ro = Ref_Options(args.reference_type)
-        if ro.metadata and not args.metadata:
-            args.metadata = ro.metadata
-        if ro.excel and not args.defining_snps:
-            args.defining_snps = ro.excel
-        if ro.gbk and not args.gbk:
-            args.gbk = ro.gbk
-
-    group = Group(pickle_file=args.pickle_file, metadata=args.metadata, gbk_list=args.gbk, defining_snps=args.defining_snps, abs_pos=args.abs_pos, group=args.group, qual_threshold=int(args.qual_threshold), n_threshold=int(args.n_threshold), mq_threshold=int(args.mq_threshold), debug=args.debug)
+            group = Group(pickle_file=args.pickle_file, metadata=args.metadata, gbk_list=args.gbk, defining_snps=args.defining_snps, abs_pos=args.abs_pos, group=args.group, qual_threshold=int(args.qual_threshold), n_threshold=int(args.n_threshold), mq_threshold=int(args.mq_threshold), debug=args.debug)
 
 # Created 2021 by Tod Stuber

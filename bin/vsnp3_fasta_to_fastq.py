@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-__version__ = "3.26"
+__version__ = "3.27"
 
 import gzip
 import os

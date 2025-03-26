@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.26"
+__version__ = "3.27"
 
 import os
 import gzip
@@ -12,7 +12,6 @@ import argparse
 import textwrap
 from collections import OrderedDict
 import multiprocessing
-multiprocessing.set_start_method('spawn', True)
 from concurrent import futures
 from dask import delayed
 from Bio.SeqIO.QualityIO import FastqGeneralIterator
@@ -79,29 +78,23 @@ class Spoligo(Setup):
         self.spoligo_dictionary = spoligo_dictionary
 
     def finding_sp(self, spacer_sequence):
-        # spacer_id, spacer_sequence = spacer_id_and_spacer_sequence
         total_count = 0
-        total_finds = 0
-        #if total < 6: # doesn't make a big different.  Might as well get full counts
-        #total += sum(seq.count(x) for x in (v)) #v=list of for and rev spacer
         total_finds = [len(regex.findall("(" + spacer + "){s<=1}", self.seq_string)) for spacer in spacer_sequence]
         for number in total_finds:
             total_count += number
-        return (total_count)
+        return total_count
 
     def binary_to_octal(self, binary):
-        #binary_len = len(binary)
         i = 0
         ie = 1
         octal = ""
         while ie < 43:
             ie = i + 3
-            # print(binary[i:ie])
             region = binary[i:ie]
             region_len = len(region)
             i += 3
             if int(region[0]) == 1:
-                if region_len < 2: # for the lone spacer 43.  When present needs to be 1 not 4.
+                if region_len < 2:  # for the lone spacer 43. When present needs to be 1 not 4.
                     oct = 1
                 else:
                     oct = 4
@@ -115,10 +108,9 @@ class Spoligo(Setup):
             except IndexError:
                 pass
             octal = octal + str(oct)
-        return(octal)
+        return octal
 
     def spoligo(self):
-
         octal = None
         sbcode = None
         db_binarycode = None
@@ -132,13 +124,13 @@ class Spoligo(Setup):
                 sum_length = 0
                 with gzip.open(fastq, "rt") as in_handle:
                     # all 3, title and seq and qual, were needed
-                    count=0
+                    count = 0
                     for title, seq, qual in FastqGeneralIterator(in_handle):
-                        if count < 1000000: #million read max
-                            count+=1
+                        if count < 1000000:  # million read max
+                            count += 1
                             sequence_list.append(seq)
                             sum_length = sum_length + len(seq)
-                    ave_length = sum_length/count
+                    ave_length = sum_length / count
                     ave_length = int(ave_length)
                     print(f'Spoligo calculated average read length: {ave_length}')
         except TypeError:
@@ -147,20 +139,38 @@ class Spoligo(Setup):
 
         if ave_length > 64:
             print("Spoligo check: Average read length >=65, Reads parsed on repeat regions before counting spacers")
-            #Three 10bp sequences dispersed across repeat region, forward and reverse
+            # Three 10bp sequences dispersed across repeat region, forward and reverse
             capture_spacer_sequence = re.compile(".*TTTCCGTCCC.*|.*GGGACGGAAA.*|.*TCTCGGGGTT.*|.*AACCCCGAGA.*|.*TGGGTCTGAC.*|.*GTCAGACCCA.*")
             sequence_list = list(filter(capture_spacer_sequence.match, sequence_list))
             seq_string = "".join(sequence_list)
         else:
-            #if <= 70 then search all reads, not just those with repeat regions.
-            print("Spoligo check: Average read length < 65.  Looking at all reads for spacers.  Will be very slow. Queue Jepordy theme song.")
+            # if <= 70 then search all reads, not just those with repeat regions.
+            print("Spoligo check: Average read length < 65. Looking at all reads for spacers. Will be very slow. Queue Jepordy theme song.")
             seq_string = "".join(sequence_list)
         self.seq_string = seq_string
-        for spacer_id, spacer_sequence in self.spoligo_dictionary.items():
-            count = delayed(self.finding_sp)(spacer_sequence)
-            count_summary.update({spacer_id: count})
-        pull = delayed(count_summary)
-        count_summary = pull.compute()
+        
+        # Using dask's delayed for parallel processing of spacers
+        from dask.distributed import Client, LocalCluster
+        
+        # Start a local dask cluster for computation
+        # Only create the client inside the method to avoid issues
+        cluster = LocalCluster(n_workers=self.cpu_count_half, threads_per_worker=2)
+        client = Client(cluster)
+        
+        try:
+            delayed_results = {}
+            for spacer_id, spacer_sequence in self.spoligo_dictionary.items():
+                delayed_results[spacer_id] = delayed(self.finding_sp)(spacer_sequence)
+                
+            # Compute all delayed tasks at once
+            results = client.compute(delayed_results)
+            count_summary = client.gather(results)
+            
+        finally:
+            # Always ensure client and cluster are closed
+            client.close()
+            cluster.close()
+            
         count_summary = OrderedDict(sorted(count_summary.items()))
         spoligo_binary_dictionary = {}
         self.call_cut_off = 2
@@ -173,11 +183,11 @@ class Spoligo(Setup):
         spoligo_binary_list = []
         for v in spoligo_binary_dictionary.values():
             spoligo_binary_list.append(v)
-        sample_binary = ''.join(str(e) for e in spoligo_binary_list)  #sample_binary correct
+        sample_binary = ''.join(str(e) for e in spoligo_binary_list)  # sample_binary correct
         self.sample_binary = sample_binary
         self.octal = self.binary_to_octal(sample_binary)
         found = False
-        with open(self.spoligo_db) as spoligo_db_file: # put into dictionary or list
+        with open(self.spoligo_db) as spoligo_db_file:  # put into dictionary or list
             for line in spoligo_db_file:
                 line = line.rstrip()
                 sbcode = line.split()[1]
@@ -191,7 +201,7 @@ class Spoligo(Setup):
             else:
                 self.sbcode = "Not Found"
         self.sample_binary = sample_binary
-        self.count_summary_list=[]
+        self.count_summary_list = []
         for spacer, count in count_summary.items():
             self.count_summary_list.append(count)
 
@@ -206,7 +216,7 @@ class Spoligo(Setup):
         print(r'\begin{adjustbox}{width=1\textwidth}', file=tex)
         print(r'\begin{tabular}{ l | l | l }', file=tex)
         print(r'\multicolumn{3}{l}{Spacer Counts} \\', file=tex)
-        print(r'\hline', file=tex) 
+        print(r'\hline', file=tex)
         count_summary = ":".join(map(str, self.count_summary_list))
         print(r'\multicolumn{3}{l}{' + f'{count_summary}' + r' } \\', file=tex)
         print(r'\hline', file=tex)
@@ -217,7 +227,7 @@ class Spoligo(Setup):
         print(r'\end{tabular}', file=tex)
         print(r'\end{adjustbox}', file=tex)
         print(r'\end{table}', file=tex)
-    
+
     def excel(self, excel_dict):
         excel_dict['Spoligotype Spacer Counts'] = f'{":".join(map(str, self.count_summary_list))}'
         excel_dict['Spoligotype Binary Code'] = f'binary-{self.sample_binary}'
@@ -225,8 +235,10 @@ class Spoligo(Setup):
         excel_dict['Spoligotype SB Number'] = f'{self.sbcode}'
 
 
-if __name__ == "__main__": # execute if directly access by the interpreter
-
+if __name__ == "__main__":  # execute if directly access by the interpreter
+    # Set multiprocessing start method here inside the main block
+    multiprocessing.set_start_method('spawn', True)
+    
     parser = argparse.ArgumentParser(prog='PROG', formatter_class=argparse.RawDescriptionHelpFormatter, description=textwrap.dedent('''\
 
     ---------------------------------------------------------
@@ -245,12 +257,12 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     spoligo = Spoligo(SAMPLE_NAME=args.SAMPLE_NAME, FASTQ_R1=args.FASTQ_R1, FASTQ_R2=args.FASTQ_R2, debug=args.debug)
     spoligo.spoligo()
 
-    #Latex report
+    # Latex report
     latex_report = Latex_Report(spoligo.sample_name)
     spoligo.latex(latex_report.tex)
     latex_report.latex_ending()
 
-    #Excel Stats
+    # Excel Stats
     excel_stats = Excel_Stats(spoligo.sample_name)
     spoligo.excel(excel_stats.excel_dict)
     excel_stats.post_excel()
@@ -267,4 +279,4 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     if args.debug is False:
         shutil.rmtree(temp_dir)
 
-# Updated 2021 by Tod Stuber
+# Updated 2025 by Python 3.12 compatibility update

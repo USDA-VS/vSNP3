@@ -1,6 +1,6 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
-__version__ = "3.26"
+__version__ = "3.27"
 
 import os
 import subprocess
@@ -36,6 +36,21 @@ class Alignment(Setup):
         self.nanopore = nanopore
         self.gbk = gbk
         self.assemble_unmap = assemble_unmap
+        
+    def filter_vcf(self, input_file, output_file, quality_threshold=20):
+        with open(input_file, 'r') as infile, open(output_file, 'w') as outfile:
+            for line in infile:
+                if line.startswith('#'):
+                    outfile.write(line)
+                else:
+                    fields = line.strip().split('\t')
+                    if len(fields) >= 6:
+                        try:
+                            qual = float(fields[5])
+                            if qual > quality_threshold:
+                                outfile.write(line)
+                        except ValueError:
+                            continue
         
     def run(self,):
         '''
@@ -86,15 +101,6 @@ class Alignment(Setup):
         alignment_vcf_run_summary.append(f'SYSTEM CALL: {samsort} -- {datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}')
         alignment_vcf_run_summary.append(f'SYSTEM CALL: {sammarkup} -- {datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}')
 
-        # os.remove(fixmate_bamfile)
-        # os.remove(pos_srt_bamfile)
-        # os.remove(nodup_bamfile)
-        # os.system(f'samtools view -Sb {samfile} -o {fixmate_bamfile}')
-        # os.system(f'samtools sort {fixmate_bamfile} -o {pos_srt_bamfile}')
-        # os.system(f'samtools index {pos_srt_bamfile}')
-        # os.system(f'picard MarkDuplicates INPUT={pos_srt_bamfile} OUTPUT={nodup_bamfile} ASSUME_SORTED=true REMOVE_DUPLICATES=true METRICS_FILE=dup_metrics.csv 2> /dev/null')
-        # os.system(f'samtools index {nodup_bamfile}')
-
         # http://www.htslib.org/doc/samtools-markdup.html
         alignment_vcf_run_summary.append(f'NOTE: Read stats gathered by markduplicate_stats.txt -- {datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}')
         mdf = pd.read_csv('markduplicate_stats.txt', delimiter=':', index_col=0, header=None)
@@ -121,6 +127,7 @@ class Alignment(Setup):
             self.DUPLICATION_RATIO = 0
 
         os.system(f'samtools index {nodup_bamfile}')
+        
         if self.nanopore:
             def qual_value_update(vcf):
                 df = pd.read_csv(vcf, sep='\t', header=None, names=["CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT", "Sample"], comment='#')
@@ -143,29 +150,24 @@ class Alignment(Setup):
                 os.remove('v_header.csv')
                 os.remove('v_annotated_body.csv')
                 return(qp100)
-
+            
             filtered_hapall = f'{sample_name}_filtered_hapall_nanopore.vcf'
-            if os.path.exists(os.path.realpath('/project/scratch/singularity')):
-                print('Downloading bcftools.sif')
-                os.system(
-                    'singularity pull --name /project/scratch/singularity/bcftools.sif docker://biocontainers/bcftools:v1.9-1-deb_cv1')
-            else:
-                print('Will attempt to run bcftools from conda environment')
-            bcftools_path = os.path.realpath('/project/scratch/singularity/bcftools.sif')
-            bcftools_mpileup = f'singularity exec {bcftools_path} bcftools mpileup --threads 16 -Ou -f {reference} {nodup_bamfile} | singularity exec {bcftools_path} bcftools call --threads 16 -mv -v -Ov -o {unfiltered_hapall}'
-            # bcftools_mpileup = f'bcftools mpileup --threads 16 -Ou -f {reference} {nodup_bamfile} | bcftools call --threads 16 -mv -v -Ov -o {unfiltered_hapall}'
-            vcffilter = f'vcffilter -f "QUAL > 20" {unfiltered_hapall} > temp1.vcf'
+            
+            # Run bcftools mpileup and call using local bcftools in working directory
+            bcftools_mpileup = f'bcftools mpileup --threads 16 -Ou -f {reference} {nodup_bamfile} | bcftools call --threads 16 -mv -v -Ov -o {unfiltered_hapall}'
             os.system(bcftools_mpileup)
-            os.system(vcffilter)
             alignment_vcf_run_summary.append(f'NOTE: Nanopore - bcftools mpileup used to call SNPs and make VCF files *** -- {datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}')
             alignment_vcf_run_summary.append(f'SYSTEM CALL: {bcftools_mpileup} -- {datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}')
-            alignment_vcf_run_summary.append(f'SYSTEM CALL: {vcffilter} -- {datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}')
-            os.system(f'vcftools --vcf temp1.vcf --remove-indels --recode --recode-INFO-all --out temp2')
+            
+            # Apply filters using local bcftools
+            bcftools_filter = f'bcftools view -i \'QUAL>20\' -v snps -o temp2.recode.vcf {unfiltered_hapall}'
+            os.system(bcftools_filter)
+            alignment_vcf_run_summary.append(f'SYSTEM CALL: {bcftools_filter} -- {datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}')
+            
+            # Update quality values and rename files
             qp100 = qual_value_update('temp2.recode.vcf')
             os.rename(qp100, filtered_hapall)
-            os.remove('temp1.vcf')
             os.remove('temp2.recode.vcf')
-            # os.remove('temp2.log')
         else:
             chrom_ranges = open("chrom_ranges.txt", 'w')
             for record in SeqIO.parse(reference, "fasta"):
@@ -192,10 +194,8 @@ class Alignment(Setup):
                     print(new_line, file=write_fix)
                 write_fix.close()
             # remove clearly poor positions
-            vcffilter_20 = f'vcffilter -f "QUAL > 20" {mapfix_hapall} > {filtered_hapall}'
-            os.system(f'vcffilter -f "QUAL > 20" {mapfix_hapall} > {filtered_hapall}')
+            self.filter_vcf(mapfix_hapall, filtered_hapall, quality_threshold=20)
             alignment_vcf_run_summary.append(f'NOTE: Freebayes MQM= changed to MQ= to stay in the same naming as GATK -- {datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}')
-            alignment_vcf_run_summary.append(f'SYSTEM CALL: {vcffilter_20} -- {datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}')
 
         unmapped_dir = 'unmapped_reads'
         if not os.path.exists(unmapped_dir):
@@ -306,21 +306,39 @@ class Alignment(Setup):
         #get program versions
         programs = []
         try:
-            minimap2_version = subprocess.run(['minimap2', "--version"], capture_output=True, text=True).stdout.rstrip()
-            programs.append(f'Minimap2: {minimap2_version}')
-            for line in subprocess.run(['freebayes'], capture_output=True, text=True).stdout.splitlines():
-                if 'version' in line:
-                    programs.append(f'Freebayes: {line.rstrip().replace("version:  ", "")}')
+            # Use more modern subprocess calls with error handling
             try:
-                programs.append(subprocess.run(['samtools', 'version'], capture_output=True, text=True).stdout.splitlines()[0])
-                programs.append(subprocess.run(['samtools', 'version'], capture_output=True, text=True).stdout.splitlines()[1])
-            except IndexError:
-                for line in subprocess.run(['samtools'], capture_output=True, text=True).stderr.splitlines():
-                    if 'Version' in line:
-                        programs.append(f'Samtools: {line}')
-            programs.append(assemble.spades_version)
-        except:
-            pass
+                minimap2_version = subprocess.run(['minimap2', "--version"], capture_output=True, text=True, check=False).stdout.rstrip()
+                programs.append(f'Minimap2: {minimap2_version}')
+            except (subprocess.SubprocessError, FileNotFoundError):
+                programs.append('Minimap2: version unknown')
+                
+            try:
+                freebayes_output = subprocess.run(['freebayes'], capture_output=True, text=True, check=False).stdout
+                for line in freebayes_output.splitlines():
+                    if 'version' in line:
+                        programs.append(f'Freebayes: {line.rstrip().replace("version:  ", "")}')
+            except (subprocess.SubprocessError, FileNotFoundError):
+                programs.append('Freebayes: version unknown')
+                
+            try:
+                samtools_output = subprocess.run(['samtools', 'version'], capture_output=True, text=True, check=False).stdout.splitlines()
+                if len(samtools_output) >= 2:
+                    programs.append(samtools_output[0])
+                    programs.append(samtools_output[1])
+                else:
+                    # Fallback for older samtools versions
+                    samtools_stderr = subprocess.run(['samtools'], capture_output=True, text=True, check=False).stderr
+                    for line in samtools_stderr.splitlines():
+                        if 'Version' in line:
+                            programs.append(f'Samtools: {line}')
+            except (subprocess.SubprocessError, FileNotFoundError, IndexError):
+                programs.append('Samtools: version unknown')
+                
+            if hasattr(assemble, 'spades_version'):
+                programs.append(assemble.spades_version)
+        except Exception as e:
+            programs.append(f'Error getting program versions: {str(e)}')
         
         self.programs = programs
         self.alignment_vcf_run_summary = alignment_vcf_run_summary

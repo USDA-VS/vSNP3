@@ -53,7 +53,7 @@ This step combines the VCF files from Step 1 to create SNP matrices and construc
 # Installation
 
 ```bash
-conda create -c conda-forge -c bioconda -n vsnp3 vsnp3=3.26
+conda create -c conda-forge -c bioconda -n vsnp3 vsnp3=3.27
 ```
 
 If using Apple's ARM/M chip
