@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.27"
+__version__ = "3.28"
 
 import os
 import io

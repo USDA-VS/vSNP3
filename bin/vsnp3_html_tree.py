@@ -8,7 +8,7 @@ from collections import defaultdict
 import os
 import math
 
-__version__ = "3.27"
+__version__ = "3.28"
 
 class Node:
     def __init__(self, name=None):

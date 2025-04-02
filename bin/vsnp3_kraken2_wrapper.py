@@ -15,7 +15,7 @@ import multiprocessing
 
 from krona_lca_all import force_tax_number
 
-__version__ = "3.27"
+__version__ = "3.28"
 
 class Kraken2_Identification:
     ''' 

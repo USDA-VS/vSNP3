@@ -10,7 +10,7 @@ Usage:
     python excel_merger.py -i <input_dir> [options]
 """
 
-__version__ = "3.27"
+__version__ = "3.28"
 
 import glob
 import os

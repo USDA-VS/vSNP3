@@ -1,15 +1,17 @@
 #!/usr/bin/env python
 
-__version__ = "3.27"
+__version__ = "3.28"
 
 import os
 import shutil
 import re
+import sys
 import pandas as pd
 import multiprocessing
 from datetime import datetime
 import svgwrite
 from cairosvg import svg2png
+import yaml
 
 
 class bcolors:
@@ -141,9 +143,26 @@ class Banner:
         self.banner = f'{os.getcwd()}/{title}-banner.png'
     
 class Latex_Report:
-    ''' 
     '''
-    def __init__(self, sample_name, report_description=None):
+    LaTeX report generator with configurable logo from YAML file
+    '''
+    def __init__(self, sample_name, config_file=None, report_description=None):
+        # If no config file is provided, look for one in the dependencies directory
+        if config_file is None:
+            # Get the directory where the script is located (bin folder)
+            script_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+            # Go up one level to parent directory
+            parent_dir = os.path.dirname(script_dir)
+            # Look for dependencies folder at the same level as bin
+            dependencies_dir = os.path.join(parent_dir, 'dependencies')
+            # Default config filename in dependencies folder
+            default_config_path = os.path.join(dependencies_dir, 'latex_config.yaml')
+            if os.path.exists(default_config_path):
+                config_file = default_config_path
+        
+        # Load configuration from YAML if provided
+        self.config = self._load_config(config_file)
+        
         date_stamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
         tex_file = f'{sample_name}_{date_stamp}_report.tex'
         self.tex_file = tex_file
@@ -159,7 +178,12 @@ class Latex_Report:
         print(r'\renewcommand\familydefault{\sfdefault}', file=tex)
         print(r'\usepackage[T1]{fontenc}', file=tex)
         print(r'\usepackage{xcolor}', file=tex)
-        print(r'\lhead{\begin{picture}(0,0) \put(0,0){\includegraphics[width=40mm]{/project/bioinformatic_databases/usdalogo.png}} \end{picture}}', file=tex)
+        
+        # Add logo only if specified in config and file exists
+        logo_path = self.config.get('logo_path')
+        if logo_path and os.path.exists(logo_path):
+            print(r'\lhead{\begin{picture}(0,0) \put(0,0){\includegraphics[width=40mm]{' + logo_path + r'}} \end{picture}}', file=tex)
+        
         current_date = datetime.now().strftime('%B %d, %Y')
         print(r'\rhead{\begin{date} \textbf{\large ' + current_date + r'} \end{date}}', file=tex)
         print(r'\begin{adjustbox}{width=1\textwidth} \\', file=tex)
@@ -171,8 +195,25 @@ class Latex_Report:
         print(r'\vspace{0.5 mm}', file=tex)
         print(r'\begin{document}', file=tex)
         self.tex = tex
-
-    def latex_ending(self,):
+    
+    def _load_config(self, config_file):
+        """Load configuration from YAML file or use defaults"""
+        default_config = {
+            'logo_path': None  # Default is no logo
+        }
+        
+        if config_file and os.path.exists(config_file):
+            try:
+                with open(config_file, 'r') as f:
+                    user_config = yaml.safe_load(f)
+                    if user_config:
+                        default_config.update(user_config)
+            except Exception as e:
+                print(f"Error loading config file: {e}")
+        
+        return default_config
+    
+    def latex_ending(self):
         print(r'\end{document}', file=self.tex)
         self.tex.close()
         os.system(f'pdflatex -interaction=nonstopmode {self.tex_file} > /dev/null 2>&1')

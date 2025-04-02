@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.27"
+__version__ = "3.28"
 
 import os
 import sys
@@ -41,17 +41,12 @@ class Remove_From_Analysis:
 
         # Updated pandas read_excel approach
         # Read the first column with no header
-        df = pd.read_excel(excel_remove, header=None, names=['sample'])
-        
-        remove_list = []
-        for each_sample in df['sample']:
-            # Convert to string in case there are non-string values
-            each_sample = str(each_sample)
-            # Use Path for path joining rather than string concatenation
-            remove_list.append(str(working_dir_path / each_sample))  # If .vcf is supplied with the sample name
-            remove_list.append(str(working_dir_path / f"{each_sample}.{extension}"))  # Most common behavior
-            remove_list.append(str(working_dir_path / f"{each_sample}_zc.{extension}"))  # Allow _zc to not be specified
-            
+        df = pd.read_excel(excel_remove, index_col=0, usecols=[0], header=None)
+        remove_list=[]
+        for each_sample in df.index:
+            remove_list.append(f'{working_directory}/{each_sample}') #if .vcf is supplied with the sample name in remove_from_analysis.xlsx
+            remove_list.append(f'{working_directory}/{each_sample}.{extension}') #most common behavior if sample name without extension is provided in remove_from_analysis.xlsx
+            remove_list.append(f'{working_directory}/{each_sample}_zc.{extension}') #allow _zc to not be specified in remove_from_analysis.xlsx
         self.excel_remove = excel_remove
         self.remove_list = remove_list
 
