@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.28"
+__version__ = "3.29"
 
 import os
 import sys
@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import re
 import pickle
+import locale
 import argparse
 import textwrap
 import pandas as pd
@@ -31,6 +32,9 @@ from vsnp3_group_on_defining_snps import Group
 from vsnp3_reference_options import Ref_Options
 from vsnp3_remove_from_analysis import Remove_From_Analysis
 
+# Force 'C' locale for consistent decimal point handling
+os.environ["LC_ALL"] = "C"
+locale.setlocale(locale.LC_ALL, "C")
 
 global_date_stamp=None
 global_working_dir='.'
@@ -640,14 +644,32 @@ if __name__ == "__main__": # execute if directly access by the interpreter
         print('\n### -group must be used with -abs_pos option\n')
         sys.exit()
 
-    if ro.metadata and not args.metadata:
-        args.metadata = ro.metadata
-    if ro.defining_snps and not args.defining_snps:
-        args.defining_snps = ro.defining_snps
-    if ro.gbk and not args.gbk:
+    # Prioritize explicitly provided files over reference type defaults
+    # Only use reference type defaults if the specific arguments were not provided
+    # This makes sure explicitly provided files via -b, -s, -m, and -remove_by_name take precedence
+    if not args.gbk and ro.gbk:
         args.gbk = ro.gbk
-    if ro.remove and not args.remove_by_name:
+        print(f"Using reference type GBK: {args.gbk}")
+    elif args.gbk:
+        print(f"Using explicitly provided GBK: {args.gbk}")
+        
+    if not args.defining_snps and ro.defining_snps:
+        args.defining_snps = ro.defining_snps
+        print(f"Using reference type defining SNPs: {args.defining_snps}")
+    elif args.defining_snps:
+        print(f"Using explicitly provided defining SNPs: {args.defining_snps}")
+        
+    if not args.metadata and ro.metadata:
+        args.metadata = ro.metadata
+        print(f"Using reference type metadata: {args.metadata}")
+    elif args.metadata:
+        print(f"Using explicitly provided metadata: {args.metadata}")
+        
+    if not args.remove_by_name and ro.remove:
         args.remove_by_name = ro.remove
+        print(f"Using reference type remove list: {args.remove_by_name}")
+    elif args.remove_by_name:
+        print(f"Using explicitly provided remove list: {args.remove_by_name}")
     
     print(f'Before sample filter: {len(vcf_to_df.dataframes)}')
     if args.remove_by_name:

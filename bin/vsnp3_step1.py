@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.28"
+__version__ = "3.29"
 
 import os
 import sys
@@ -8,6 +8,7 @@ import subprocess
 import shutil
 import glob
 import re
+import locale
 import argparse
 import textwrap
 import importlib.metadata
@@ -25,6 +26,10 @@ from vsnp3_alignment_vcf import Alignment
 from vsnp3_spoligotype import Spoligo
 from vsnp3_group_reporter import GroupReporter
 from vsnp3_fasta_to_fastq import Fasta_to_Paired_Fastq
+
+# Force 'C' locale for consistent decimal point handling
+os.environ["LC_ALL"] = "C"
+locale.setlocale(locale.LC_ALL, "C")
 
 
 class vSNP3_Step1(Setup):

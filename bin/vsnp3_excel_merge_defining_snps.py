@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 
-__version__ = "3.28"
+__version__ = "3.29"
 
 import os
 import re
 import sys
+import locale
 import math
 import pandas as pd
 from openpyxl.styles import Font
@@ -12,6 +13,10 @@ from openpyxl import Workbook
 from datetime import datetime
 import argparse
 import textwrap
+
+# Force 'C' locale for consistent decimal point handling
+os.environ["LC_ALL"] = "C"
+locale.setlocale(locale.LC_ALL, "C")
 
 
 class Expand_Range():

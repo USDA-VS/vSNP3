@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.28"
+__version__ = "3.29"
 
 import os
 import subprocess
@@ -9,6 +9,7 @@ import re
 import glob
 import time
 import random
+import locale
 from datetime import datetime
 import pandas as pd
 import multiprocessing
@@ -18,6 +19,10 @@ import textwrap
 import itertools
 from Bio import SeqIO
 from collections import defaultdict
+
+# Force 'C' locale for consistent decimal point handling
+os.environ["LC_ALL"] = "C"
+locale.setlocale(locale.LC_ALL, "C")
 
 
 class Tree:

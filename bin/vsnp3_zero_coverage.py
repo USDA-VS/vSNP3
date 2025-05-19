@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 
-__version__ = "3.28"
+__version__ = "3.29"
 
 import os
 import re
 import shutil
+import locale
 import argparse
 import textwrap
 import pandas as pd
@@ -17,6 +18,9 @@ from vsnp3_file_setup import Banner
 from vsnp3_file_setup import Latex_Report
 from vsnp3_file_setup import Excel_Stats
 
+# Force 'C' locale for consistent decimal point handling
+os.environ["LC_ALL"] = "C"
+locale.setlocale(locale.LC_ALL, "C")
 
 class Zero_Coverage(Setup):
     ''' 
@@ -113,7 +117,7 @@ class Zero_Coverage(Setup):
             # First extract chromosome and positions separately
             zero_positions_list = []
             for idx in zero_df.index:
-                chrom, pos = idx.split('-', 1)
+                chrom, pos = idx.rsplit('-', 1)
                 zero_positions_list.append({
                     'CHROM': chrom,
                     'POS': int(pos),

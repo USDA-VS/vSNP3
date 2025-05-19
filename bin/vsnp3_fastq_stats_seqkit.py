@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.28"
+__version__ = "3.29"
 
 import os
 import subprocess
@@ -8,7 +8,7 @@ import shutil
 import glob
 import argparse
 import textwrap
-
+import locale
 import humanize
 
 from vsnp3_file_setup import Setup
@@ -16,6 +16,11 @@ from vsnp3_file_setup import bcolors
 from vsnp3_file_setup import Banner
 from vsnp3_file_setup import Latex_Report
 from vsnp3_file_setup import Excel_Stats
+
+
+# Force 'C' locale for consistent decimal point handling
+os.environ["LC_ALL"] = "C"
+locale.setlocale(locale.LC_ALL, "C")
 
 
 class FASTQ_Container:

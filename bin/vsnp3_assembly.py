@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 
-__version__ = "3.28"
+__version__ = "3.29"
 
 import os
 import sys
 import shutil
 import glob
 import subprocess
+import locale
 import argparse
 import textwrap
 import numpy as np
@@ -20,6 +21,9 @@ from vsnp3_file_setup import Excel_Stats
 
 from vsnp3_fastq_stats_seqkit import FASTQ_Stats
 
+# Force 'C' locale for consistent decimal point handling
+os.environ["LC_ALL"] = "C"
+locale.setlocale(locale.LC_ALL, "C")
 
 class Assemble(Setup):
     ''' 

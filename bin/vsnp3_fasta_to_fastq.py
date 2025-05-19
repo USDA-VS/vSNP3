@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-__version__ = "3.28"
+__version__ = "3.29"
 
 import gzip
 import os
@@ -10,7 +10,6 @@ from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
 from Bio.Seq import Seq
 import logging
-from datetime import datetime
 
 # Ambiguity codes
 ambiguity_codes = {

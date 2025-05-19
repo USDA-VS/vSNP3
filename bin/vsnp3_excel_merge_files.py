@@ -10,12 +10,12 @@ Usage:
     python excel_merger.py -i <input_dir> [options]
 """
 
-__version__ = "3.28"
+__version__ = "3.29"
 
-import glob
 import os
 import sys
 import logging
+import locale
 import argparse
 from datetime import datetime
 from typing import List, Optional
@@ -23,6 +23,9 @@ from typing import List, Optional
 import pandas as pd
 from pathlib import Path
 
+# Force 'C' locale for consistent decimal point handling
+os.environ["LC_ALL"] = "C"
+locale.setlocale(locale.LC_ALL, "C")
 
 class ExcelMerger:
     def __init__(

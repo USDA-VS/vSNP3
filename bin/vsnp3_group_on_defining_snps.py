@@ -1,11 +1,12 @@
 #!/usr/bin/env python
 
-__version__ = "3.28"
+__version__ = "3.29"
 
 import os
 import sys
 import re
 import pickle
+import locale
 import argparse
 import textwrap
 import numpy as np
@@ -15,10 +16,8 @@ from collections import Counter
 from concurrent import futures
 import multiprocessing
 from multiprocessing import Process, Queue
-import functools
 import time
 from datetime import datetime
-from cpuinfo import get_cpu_info
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -28,6 +27,10 @@ from vsnp3_fasta_to_snps_table import Tree
 from vsnp3_fasta_to_snps_table import Tables
 from vsnp3_annotation import Annotation
 from vsnp3_html_tree import html_tree
+
+# Force 'C' locale for consistent decimal point handling
+os.environ["LC_ALL"] = "C"
+locale.setlocale(locale.LC_ALL, "C")
 
 
 # Define wrapper at module level

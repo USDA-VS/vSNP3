@@ -1,17 +1,22 @@
 #!/usr/bin/env python
 
-__version__ = "3.28"
+__version__ = "3.29"
 
 import os
 import shutil
 import re
 import sys
+import locale
 import pandas as pd
 import multiprocessing
 from datetime import datetime
 import svgwrite
 from cairosvg import svg2png
 import yaml
+
+# Force 'C' locale for consistent decimal point handling
+os.environ["LC_ALL"] = "C"
+locale.setlocale(locale.LC_ALL, "C")
 
 
 class bcolors:

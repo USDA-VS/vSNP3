@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 
-__version__ = "3.28"
+__version__ = "3.29"
 
 import os
 import subprocess
 import re
 import glob
 import shutil
+import locale
 import argparse
 import textwrap
 from datetime import datetime
@@ -21,6 +22,10 @@ from vsnp3_fastq_stats_seqkit import FASTQ_Stats
 from vsnp3_vcf_annotation import VCF_Annotation
 from vsnp3_assembly import Assemble
 from vsnp3_zero_coverage import Zero_Coverage
+
+# Force 'C' locale for consistent decimal point handling
+os.environ["LC_ALL"] = "C"
+locale.setlocale(locale.LC_ALL, "C")
 
 
 class Alignment(Setup):
