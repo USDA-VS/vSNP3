@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.29"
+__version__ = "3.30"
 
 import os
 import gzip
@@ -210,7 +210,7 @@ class Spoligo(Setup):
         print(r'\begin{table}[ht!]', file=tex)
         print(r'\begin{adjustbox}{width=1\textwidth}', file=tex)
         print(r'\begin{center}', file=tex)
-        print('\includegraphics[scale=1]{' + blast_banner.banner + '}', file=tex)
+        print(r'\includegraphics[scale=1]{' + blast_banner.banner + '}', file=tex)
         print(r'\end{center}', file=tex)
         print(r'\end{adjustbox}', file=tex)
         print(r'\begin{adjustbox}{width=1\textwidth}', file=tex)
@@ -220,9 +220,9 @@ class Spoligo(Setup):
         count_summary = ":".join(map(str, self.count_summary_list))
         print(r'\multicolumn{3}{l}{' + f'{count_summary}' + r' } \\', file=tex)
         print(r'\hline', file=tex)
-        print(f'Binary Code, threshold greater than {str(self.call_cut_off)} spacer counts & Octal Code & SB Number \\\\', file=tex)
+        print(f'Binary Code, threshold greater than {str(self.call_cut_off)} spacer counts & Octal Code & SB Number {r"\\"}', file=tex)
         print(r'\hline', file=tex)
-        print(f'{self.sample_binary} & {self.octal} & {self.sbcode} \\\\', file=tex)
+        print(f'{self.sample_binary} & {self.octal} & {self.sbcode} {r"\\"}', file=tex)
         print(r'\hline', file=tex)
         print(r'\end{tabular}', file=tex)
         print(r'\end{adjustbox}', file=tex)

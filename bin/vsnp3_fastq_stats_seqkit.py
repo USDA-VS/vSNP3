@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.29"
+__version__ = "3.30"
 
 import os
 import subprocess
@@ -110,26 +110,26 @@ class FASTQ_Stats(Setup):
         print(r'\begin{table}[ht!]', file=tex)
         print(r'\begin{adjustbox}{width=1\textwidth}', file=tex)
         print(r'\begin{center}', file=tex)
-        print('\includegraphics[scale=1]{' + blast_banner.banner + '}', file=tex)
+        print(r'\includegraphics[scale=1]{' + blast_banner.banner + '}', file=tex)
         print(r'\end{center}', file=tex)
         print(r'\end{adjustbox}', file=tex)
         print(r'\begin{adjustbox}{width=1\textwidth}', file=tex)
         print(r'\small', file=tex)
         print(r'\begin{tabular}{ l | l | l }', file=tex)
         if self.FASTQ_R2:
-            print('Filename & ' + os.path.basename(self.R1.file_name).replace("_", "\_") + ' & ' + os.path.basename(self.R2.file_name).replace("_", "\_") + ' \\\\', file=tex)
+            print('Filename & ' + os.path.basename(self.R1.file_name).replace("_", r"\_") + ' & ' + os.path.basename(self.R2.file_name).replace("_", r"\_") + r' \\', file=tex)
             print(r'\hline', file=tex)
-            print(f'File Size & {self.R1.file_size} & {self.R2.file_size} \\\\', file=tex)
-            print(f'Q30 Passing & {self.R1.passQ30}\% & {self.R2.passQ30}\% \\\\', file=tex)
-            print(f'Mean Read Score & {float(self.R1.read_quality_average):0.1f} & {float(self.R2.read_quality_average):0.1f} \\\\', file=tex)
-            print(f'Average Read Length & {self.R1.avg_len} & {self.R1.avg_len} \\\\', file=tex)
+            print(f'File Size & {self.R1.file_size} & {self.R2.file_size} {r"\\"}', file=tex)
+            print(f'Q30 Passing & {self.R1.passQ30}\\% & {self.R2.passQ30}\\% {r"\\"}', file=tex)
+            print(f'Mean Read Score & {float(self.R1.read_quality_average):0.1f} & {float(self.R2.read_quality_average):0.1f} {r"\\"}', file=tex)
+            print(f'Average Read Length & {self.R1.avg_len} & {self.R1.avg_len} {r"\\"}', file=tex)
         else:
-            print('Filename & ' + os.path.basename(self.R1.file_name).replace("_", "\_") + ' & Read 2 \\\\', file=tex)
+            print('Filename & ' + os.path.basename(self.R1.file_name).replace("_", r"\_") + r' & Read 2 \\', file=tex)
             print(r'\hline', file=tex)
-            print(f'File Size & {self.R1.file_size} & N/A \\\\', file=tex)
-            print(f'Q30 Passing & {self.R1.passQ30}\% & N/A \\\\', file=tex)
-            print(f'Mean Read Score & {float(self.R1.read_quality_average):0.1f} & N/A \\\\', file=tex)
-            print(f'Average Read Length & {self.R1.avg_len} & N/A \\\\', file=tex)
+            print(f'File Size & {self.R1.file_size} & N/A {r"\\"}', file=tex)
+            print(f'Q30 Passing & {self.R1.passQ30}\\% & N/A {r"\\"}', file=tex)
+            print(f'Mean Read Score & {float(self.R1.read_quality_average):0.1f} & N/A {r"\\"}', file=tex)
+            print(f'Average Read Length & {self.R1.avg_len} & N/A {r"\\"}', file=tex)
         print(r'\hline', file=tex)
         print(r'\end{tabular}', file=tex)
         print(r'\end{adjustbox}', file=tex)

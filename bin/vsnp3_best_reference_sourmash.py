@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-__version__ = "3.29"
+__version__ = "3.30"
 
 import os
 import subprocess
@@ -223,13 +223,13 @@ class Best_Reference(Setup):
             os.remove(f'{self.FASTQ_R1}.sig')
             
         print("#############\n")
-
+        
     def latex(self, tex):
         blast_banner = Banner("Sourmash Sequence Similarity")
         print(r'\begin{table}[ht!]', file=tex)
         print(r'\begin{adjustbox}{width=1\textwidth}', file=tex)
         print(r'\begin{center}', file=tex)
-        print('\includegraphics[scale=1]{' + blast_banner.banner + '}', file=tex)
+        print(r'\includegraphics[scale=1]{' + blast_banner.banner + '}', file=tex)
         print(r'\end{center}', file=tex)
         print(r'\end{adjustbox}', file=tex)
         print(r'\begin{adjustbox}{width=1\textwidth}', file=tex)
@@ -239,18 +239,18 @@ class Best_Reference(Setup):
         count=0
         
         if not hasattr(self, 'sourmash_df') or self.sourmash_df.empty:
-            print('Sourmash - No Data Output & Sourmash - No Data Output \\\\', file=tex)
+            print('Sourmash - No Data Output & Sourmash - No Data Output ' + r'\\', file=tex)
         else:
             try:
                 for row in self.sourmash_df.itertuples():
                     count+=1
                     if count <= 10:
                         percentage = f'{row[1]:.1%}'
-                        name = row[4].replace("_", "\_") if isinstance(row[2], str) else "Invalid Name"
-                        print(percentage.replace("%", "\%") + ' & ' + name + ' \\\\', file=tex)
+                        name = row[4].replace("_", r"\_") if isinstance(row[2], str) else "Invalid Name"
+                        print(percentage.replace("%", r"\%") + ' & ' + name + r' \\', file=tex)
                         print(r'\hline', file=tex)
             except Exception as e:
-                print(f'Sourmash - Error processing data: {str(e)} & Error \\\\', file=tex)
+                print(f'Sourmash - Error processing data: {str(e)} & Error {r"\\"}', file=tex)
                 print(r'\hline', file=tex)
                 
         print(r'\end{tabular}', file=tex)

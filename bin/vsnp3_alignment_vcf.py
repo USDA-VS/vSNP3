@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-__version__ = "3.29"
+__version__ = "3.30"
 
 import os
 import subprocess
@@ -354,7 +354,7 @@ class Alignment(Setup):
         print(r'\begin{table}[ht!]', file=tex)
         print(r'\begin{adjustbox}{width=1\textwidth}', file=tex)
         print(r'\begin{center}', file=tex)
-        print('\includegraphics[scale=1]{' + blast_banner.banner + '}', file=tex)
+        print(r'\includegraphics[scale=1]{' + blast_banner.banner + '}', file=tex)
         print(r'\end{center}', file=tex)
         print(r'\end{adjustbox}', file=tex)
         print(r'\begin{adjustbox}{width=1\textwidth}', file=tex)
@@ -365,7 +365,7 @@ class Alignment(Setup):
         mapped_reads = self.READS_PAIRED + self.READS_SINGLE
         total_reads = mapped_reads + self.READS_EXCLUDED
         self.freq_unmapped_reads = self.READS_EXCLUDED / total_reads
-        print(f'{self.READS_PAIRED:,} & {self.READS_SINGLE:,} & {self.READS_EXCLUDED:,} & {(self.freq_unmapped_reads*100):,.1f}' + r'\%' + f' & ' + r'\multicolumn{2}{l}{' + f'{self.assembly_message}' + r' } \\', file=tex)
+        print(f'{self.READS_PAIRED:,} & {self.READS_SINGLE:,} & {self.READS_EXCLUDED:,} & {(self.freq_unmapped_reads*100):,.1f}\\% & ' + r'\multicolumn{2}{l}{' + f'{self.assembly_message}' + r'} \\', file=tex)
         print(r'\hline', file=tex)
         print(r'\hline', file=tex)
         
@@ -375,10 +375,10 @@ class Alignment(Setup):
         print(r'\hline', file=tex)
         print(r'\hline', file=tex)
 
-        print(f'BAM File & Reference Length & Genome with Coverage & Average Depth & No Coverage Bases & Ambiguous SNPs & Quality SNPs \\\\', file=tex)
+        print(f'BAM File & Reference Length & Genome with Coverage & Average Depth & No Coverage Bases & Ambiguous SNPs & Quality SNPs {r"\\"}', file=tex)
         print(r'\hline', file=tex)
-        bam = self.zero_coverage.bam.replace('_', '\_')
-        print(f'{bam} & {self.zero_coverage.reference_length:,} & {(self.zero_coverage.genome_coverage*100):,.2f}\% & {self.zero_coverage.ave_coverage:,.1f}X & {self.zero_coverage.total_zero_coverage:,} & {self.zero_coverage.ac1_count:,} & {self.zero_coverage.good_snp_count:,} \\\\', file=tex)
+        bam = self.zero_coverage.bam.replace('_', r'\_')
+        print(f'{bam} & {self.zero_coverage.reference_length:,} & {(self.zero_coverage.genome_coverage*100):,.2f}\\% & {self.zero_coverage.ave_coverage:,.1f}X & {self.zero_coverage.total_zero_coverage:,} & {self.zero_coverage.ac1_count:,} & {self.zero_coverage.good_snp_count:,} {r"\\"}', file=tex)
         print(r'\hline', file=tex)
 
         if groups:

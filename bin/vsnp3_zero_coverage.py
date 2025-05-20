@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.29"
+__version__ = "3.30"
 
 import os
 import re
@@ -169,15 +169,15 @@ class Zero_Coverage(Setup):
         print(r'\begin{table}[ht!]', file=tex)
         print(r'\begin{adjustbox}{width=1\textwidth}', file=tex)
         print(r'\begin{center}', file=tex)
-        print('\includegraphics[scale=1]{' + blast_banner.banner + '}', file=tex)
+        print(r'\includegraphics[scale=1]{' + blast_banner.banner + '}', file=tex)
         print(r'\end{center}', file=tex)
         print(r'\end{adjustbox}', file=tex)
         print(r'\begin{adjustbox}{width=1\textwidth}', file=tex)
         print(r'\begin{tabular}{ l | l | l | l | l | l | l | l }', file=tex)
-        print(f'BAM File & Reference Length & Genome with Coverage & Average Depth & No Coverage Bases & Ambiguous SNPs & Quality SNPs \\\\', file=tex)
+        print(f'BAM File & Reference Length & Genome with Coverage & Average Depth & No Coverage Bases & Ambiguous SNPs & Quality SNPs {r"\\"}', file=tex)
         print(r'\hline', file=tex)
-        bam = self.bam.replace('_', '\_')
-        print(f'{bam} & {self.reference_length:,} & {(self.genome_coverage*100):,.2f}\% & {self.ave_coverage:,.1f}X & {self.total_zero_coverage:,} & {self.ac1_count:,} & {self.good_snp_count:,} \\\\', file=tex)
+        bam = self.bam.replace('_', r'\_')
+        print(f'{bam} & {self.reference_length:,} & {(self.genome_coverage*100):,.2f}\\% & {self.ave_coverage:,.1f}X & {self.total_zero_coverage:,} & {self.ac1_count:,} & {self.good_snp_count:,} {r"\\"}', file=tex)
         print(r'\hline', file=tex)
         print(r'\end{adjustbox}', file=tex)
         print(r'\vspace{0.1 mm}', file=tex)
