@@ -10,11 +10,6 @@ If using a Mac, download the Mac distribution:
 wget https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh
 ```
 
-If using Apple's ARM/M chip
-```
-curl -O https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-arm64.sh
-```
-
 If using WSL or Linux, download the Linux 64-Bit Installer:
 
 ```
@@ -24,7 +19,7 @@ wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
 Install Miniconda using the downloaded file:
 
 ```
-bash Miniconda3-latest-*.sh
+bash Miniconda3-latest-*-x86_64.sh
 ```
 
 Follow the prompts:
