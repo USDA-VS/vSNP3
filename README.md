@@ -142,6 +142,52 @@ vSNP3's defining SNP capability allows you to:
 - Quickly identify related samples in an outbreak scenario
 - Build an intelligent, searchable sample database
 
+## 🧬 Understanding Defining SNPs
+
+One of vSNP3's most powerful features is its ability to automatically classify samples using defining SNPs. Each reference type has its own defining SNP Excel file that defines these critical positions.
+
+### Locating Your Defining SNP Files
+
+After installation, you can find the path to your defining SNP files with:
+
+```bash
+vsnp3_path_adder.py -s
+```
+
+This will show all installed reference types and their associated file paths.
+
+### Anatomy of a Defining SNP File
+
+<p align="center">
+  <img src="./docs/img/defining_snps_example.png" alt="Defining SNPs Excel Structure" width="800"/>
+</p>
+
+The defining SNP Excel file has a structured format:
+
+1. **Row 1**: Contains chromosome:position identifiers for each SNP position
+2. **Row 2**: Names of each group/subgroup (e.g., Mbovis-All, Mbovis-01, Mbovis-01A)
+3. **Remaining Rows**: Positions to be filtered from the analysis for each specific group
+
+When vSNP3 analyzes a sample:
+- It checks the sample's nucleotides at each defining position
+- Based on the SNP pattern, it automatically assigns the sample to the appropriate group
+- During analysis, it filters out the problematic positions listed below each group's column
+
+### Customizing Your Analysis
+
+The beauty of this system is its flexibility:
+- You can define hierarchical groups based on evolutionary relationships
+- Each group can have its own set of filtered positions to improve analysis quality
+- As you discover new lineages, you can update the defining SNP file to reflect them
+
+This intelligent classification system allows you to:
+- Automatically organize samples as they're processed
+- Focus your analysis on specific groups of interest
+- Maintain consistent classifications across your entire database
+- Filter out positions known to be problematic for specific lineages
+
+The defining SNP system transforms vSNP3 from a simple SNP caller into an intelligent analysis platform that grows more valuable as your sample database expands.
+
 ## 📦 Installation
 
 ```bash
