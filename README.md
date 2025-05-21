@@ -27,12 +27,14 @@
 
 Most SNP callers force you to reprocess all your samples each time you add new ones. vSNP3's two-step approach is different:
 
-1. **Step 1: Process Once** - Align reads and call SNPs for each sample individually
-2. **Step 2: Combine as Needed** - Generate matrices and trees from any combination of samples
+1. **Step 1: Process Alignment Once** - Align reads and call SNPs for each sample individually
+2. **Step 2: Combine and run VCF files** - Generate matrices and trees from any combination of samples
 
 <p align="center">
-  <img src="./docs/img/step1_file_structure.png" alt="Step 1 output" width="350"/>
-  <img src="./docs/img/step2_file_structure.png" alt="Step 2 output" width="350"/>
+  <img src="./docs/img/step1_file_structure.png" alt="Step 1 output" width="550"/>
+</p>
+<p align="center">
+  <img src="./docs/img/step2_file_structure.png" alt="Step 2 output" width="550"/>
 </p>
 
 This approach lets you:
@@ -41,7 +43,7 @@ This approach lets you:
 - Save computational resources and time
 - Maintain a growing, curated database of SNP profiles
 
-### Defining SNPs: Intelligent Sample Classification
+### Defining SNPs: Sample Classification
 
 A unique feature of vSNP3 is its use of defining SNPs to automatically categorize samples:
 
@@ -64,7 +66,6 @@ Full Dataset (100 samples)
 Benefits of defining SNPs:
 - **Automatic Grouping**: Samples are classified into groups based on specific SNP patterns
 - **Focused Analysis**: Quickly drill down to specific subsets of related samples
-- **Hierarchical Investigation**: Filter your dataset to focus only on samples of interest
 - **Computational Efficiency**: Reduce analysis time by working with smaller, relevant sample sets
 
 ## 📦 Installation
@@ -84,7 +85,8 @@ vsnp3_step1.py -h
 vsnp3_step2.py -h
 ```
 ```bash
-# Download test dataset
+# Download test dataset and add reference types
+cd ${HOME}
 git clone https://github.com/USDA-VS/vsnp3_test_dataset.git
 cd vsnp3_test_dataset/vsnp_dependencies
 vsnp3_path_adder.py -d $(pwd)
@@ -141,14 +143,14 @@ Sample outputs:
   <img src="./docs/img/step2_table.png" alt="Step 2 SNP matrix" width="600"/>
 </p>
 
-### Intelligence Through Defining SNPs
+### Using Defining SNPs
 
 vSNP3's defining SNP capability allows you to:
 
 - Automatically classify samples into hierarchical groups
 - Focus your analysis on biologically relevant sample subsets
 - Quickly identify related samples in an outbreak scenario
-- Build an intelligent, searchable sample database
+- Build a labeled sample database
 
 ## 🧬 Understanding Defining SNPs
 
@@ -188,7 +190,7 @@ The beauty of this system is its flexibility:
 - Each group can have its own set of filtered positions to improve analysis quality
 - As you discover new lineages, you can update the defining SNP file to reflect them
 
-This intelligent classification system allows you to:
+This classification system allows you to:
 - Automatically organize samples as they're processed
 - Focus your analysis on specific groups of interest
 - Maintain consistent classifications across your entire database
@@ -209,9 +211,11 @@ Adding a reference is simple:
 vsnp3_path_adder.py -d /path/to/reference_files
 ```
 
+Reference types are called based on their directory names once their parent directory is added.
+
 ## 🔄 Setting Up Reference Types
 
-One of the most important first steps in using vSNP3 is setting up your reference types. This only needs to be done once, and it enables all the powerful features of vSNP3 including automatic sample classification and group-specific filtering.
+One of the most important first steps in using vSNP3 is setting up your reference types. This only needs to be done once, and it enables all the powerful features of vSNP3 including automatic sample classification and group-specific filtering.  Reference types are called based on their directory names once their **parent directory** is added.
 
 ### What Is a Reference Type?
 
@@ -228,11 +232,11 @@ These files work together to provide the foundation for your analyses.
 Adding a reference type is simple using the `vsnp3_path_adder.py` utility:
 
 ```bash
-# Add a reference from a directory containing all necessary files
-vsnp3_path_adder.py -d /path/to/reference_files
+# Add a reference parent directory containing all necessary files.  Parent directory contains the reference directory.  This parent directory can contain many reference types, each a separate subfolder.
+vsnp3_path_adder.py -d /path/to/parent_dictory
 ```
 
-This command tells vSNP3 where to find the reference files for a particular organism. Once added, you can refer to this reference type by name in all your analyses.
+This command tells vSNP3 where to find the reference files for a particular organism. The reference type name is taken directly from the directory name. For example, if your files are in a directory called `Mycobacterium_AF2122`, that becomes the reference type name you'll use in your commands.
 
 ### Example Reference Type Setup
 
@@ -242,21 +246,22 @@ Let's walk through a complete example:
    
    Create a directory with these files:
    ```
-   Mycobacterium_AF2122/
-   ├── defining_filter.xlsx    # Contains defining SNPs and filter positions
-   ├── metadata.xlsx           # Sample name mapping
-   ├── AF2122.fasta            # Reference genome
-   └── AF2122.gbk              # GenBank annotation file
+   Parent_Directory/
+      └──Mycobacterium_AF2122/
+         ├── defining_filter.xlsx    # Contains defining SNPs and filter positions
+         ├── metadata.xlsx           # Sample name mapping
+         ├── AF2122.fasta            # Reference genome
+         └── AF2122.gbk              # GenBank annotation file
    ```
 
 2. **Add the reference type to vSNP3**
    ```bash
-   vsnp3_path_adder.py -d /path/to/Mycobacterium_AF2122
+   vsnp3_path_adder.py -d /path/to/Parent_Directory
    ```
 
 3. **Verify the reference was added**
    ```bash
-   vsnp3_path_adder.py -s show
+   vsnp3_path_adder.py -s
    ```
    
    You should see your reference type listed, along with paths to all associated files.
@@ -267,19 +272,13 @@ vSNP3 allows you to work with multiple reference types:
 
 - **Adding additional references**: Simply run the path adder for each new reference
   ```bash
-  vsnp3_path_adder.py -d /path/to/another_reference
+  vsnp3_path_adder.py -d /path/to/another_parent_directory
   ```
 
 - **Viewing all references**: Check which references are available
   ```bash
-  vsnp3_path_adder.py -s show
+  vsnp3_path_adder.py -s
   ```
-
-- **Removing references**: If you need to remove a reference
-  ```bash
-  vsnp3_path_adder.py -r remove
-  ```
-  This will prompt you to select which reference to remove.
 
 ### Best Practices for Reference Management
 
@@ -306,7 +305,7 @@ For full details, see [Additional Tools](./docs/instructions/additional_tools.md
 - **Disease outbreak investigation**: Track transmission chains in real time
 - **Surveillance programs**: Monitor pathogen evolution over time
 - **Vaccine strain monitoring**: Detect drift from vaccine strains
-- **Source attribution**: Identify the origin of contamination or infection
+- **Mix strain evaluation**: Identify mixed strains
 - **Antimicrobial resistance tracking**: Link resistance profiles to genetic markers
 
 ## 🤝 Support and Citation
