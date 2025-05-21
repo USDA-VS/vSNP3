@@ -231,8 +231,10 @@ These files work together to provide the foundation for your analyses.
 
 Adding a reference type is simple using the `vsnp3_path_adder.py` utility:
 
+Parent directory contains the reference directory.  This parent directory may contain many reference types, each a separate subfolder.
+
 ```bash
-# Add a reference parent directory containing all necessary files.  Parent directory contains the reference directory.  This parent directory can contain many reference types, each a separate subfolder.
+# Add a reference parent directory containing all necessary files.  
 vsnp3_path_adder.py -d /path/to/parent_dictory
 ```
 
