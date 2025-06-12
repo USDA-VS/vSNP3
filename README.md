@@ -96,6 +96,7 @@ vsnp3_path_adder.py -d $(pwd)
 cd ~/vsnp3_test_dataset/AF2122_test_files/step1
 vsnp3_step1.py -r1 *_R1*.fastq.gz -r2 *_R2*.fastq.gz -t Mycobacterium_AF2122
 ```
+Step 2 uses the _zc.vcf file from step 1 which contains positions with no coverage.  Your step 2 VCF database should be built with these _zc.vcf files.
 ```bash
 # Run Step 2: Generate SNP matrix and tree (can be run with any sample combination)
 cd ~/vsnp3_test_dataset/AF2122_test_files/step2
