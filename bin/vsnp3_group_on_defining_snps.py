@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 
-__version__ = "3.30"
+__version__ = "3.31"
 
 import os
 import sys
 import re
+import unicodedata
 import pickle
 import locale
 import argparse
@@ -151,35 +152,51 @@ class Group():
             all_vcf_column = filter_snps_df.iloc[:, 0:1].to_dict(orient='list')
             all_vcf_name = list(all_vcf_column.keys())[0]
 
-        if metadata:
-            metadata_test = True
-            metadata_df = pd.read_excel(metadata, header=None, index_col=0, usecols=[0, 1], names=['file_name', 'metadata'])
-            #for names to match change to string types in case sample name are numbers/int
-            metadata_df = metadata_df.reset_index()
-            metadata_df['file_name'] = metadata_df['file_name'].astype(str)
-            metadata_df['metadata'] = metadata_df['metadata'].astype(str)
-            #fix metadata tags
-            metadata_df['metadata'] = metadata_df['metadata'].replace({'/':'_'}, regex=True)
-            metadata_df['metadata'] = metadata_df['metadata'].replace({'\.':'_'}, regex=True)
-            metadata_df['metadata'] = metadata_df['metadata'].replace({'\*':'_'}, regex=True)
-            metadata_df['metadata'] = metadata_df['metadata'].replace({'\?':'_'}, regex=True)
-            metadata_df['metadata'] = metadata_df['metadata'].replace({'\(':'_'}, regex=True)
-            metadata_df['metadata'] = metadata_df['metadata'].replace({'\)':'_'}, regex=True)
-            metadata_df['metadata'] = metadata_df['metadata'].replace({'\[':'_'}, regex=True)
-            metadata_df['metadata'] = metadata_df['metadata'].replace({'\]':'_'}, regex=True)
-            metadata_df['metadata'] = metadata_df['metadata'].replace({' ':'_'}, regex=True)
-            metadata_df['metadata'] = metadata_df['metadata'].replace({'{':'_'}, regex=True)
-            metadata_df['metadata'] = metadata_df['metadata'].replace({'}':'_'}, regex=True)
-            metadata_df['metadata'] = metadata_df['metadata'].replace({'-_':'_'}, regex=True)
-            metadata_df['metadata'] = metadata_df['metadata'].replace({'_-':'_'}, regex=True)
-            metadata_df['metadata'] = metadata_df['metadata'].replace({'--':'_'}, regex=True)
-            metadata_df['metadata'] = metadata_df['metadata'].replace({'_$':''}, regex=True)
-            metadata_df['metadata'] = metadata_df['metadata'].replace({'-$':''}, regex=True)
-            metadata_df['metadata'] = metadata_df['metadata'].replace({"\'": ""}, regex=True)
-            metadata_df['metadata'] = metadata_df['metadata'].replace({',':''}, regex=True)
-            
-        else:
-            metadata_test = False
+            def clean_unicode(text):
+                """Clean unicode characters and normalize text for safe file operations"""
+                if pd.isna(text):
+                    return text
+                
+                # Convert to string if not already
+                text = str(text)
+                
+                # Remove or replace problematic unicode characters
+                # Option 1: Remove all non-ASCII characters
+                # text = text.encode('ascii', errors='ignore').decode('ascii')
+                
+                # Option 2: Replace accented characters with ASCII equivalents (recommended)
+                text = unicodedata.normalize('NFD', text)
+                text = text.encode('ascii', errors='ignore').decode('ascii')
+                
+                return text
+        
+            if metadata:
+                metadata_test = True
+                metadata_df = pd.read_excel(metadata, header=None, index_col=0, usecols=[0, 1], names=['file_name', 'metadata'])
+                
+                # Convert to string types in case sample names are numbers/int
+                metadata_df = metadata_df.reset_index()
+                metadata_df['file_name'] = metadata_df['file_name'].astype(str)
+                metadata_df['metadata'] = metadata_df['metadata'].astype(str)
+                
+                # Clean unicode characters first
+                metadata_df['metadata'] = metadata_df['metadata'].apply(clean_unicode)
+                
+                # Define all illegal characters that need to be replaced
+                illegal_chars = ['\t', '\r', ' ', ':', ',', ')', '(', ';', ']', '[', "'", 
+                                '/', '.', '*', '?', '{', '}']
+                
+                # Replace each illegal character with underscore
+                for char in illegal_chars:
+                    metadata_df['metadata'] = metadata_df['metadata'].str.replace(char, '_', regex=False)
+                
+                # Clean up multiple underscores and trailing characters
+                metadata_df['metadata'] = metadata_df['metadata'].str.replace('_+', '_', regex=True)  # Multiple underscores to single
+                metadata_df['metadata'] = metadata_df['metadata'].str.replace(r'_$', '', regex=True)   # Trailing underscore
+                metadata_df['metadata'] = metadata_df['metadata'].str.replace(r'-$', '', regex=True)   # Trailing dash
+                
+            else:
+                metadata_test = False
 
         print(f'{bcolors.RED}\nDefining SNPs: {bcolors.ENDC}{bcolors.WHITE}{defining_snps}{bcolors.ENDC}')
         print(f'{bcolors.RED}Metadata: {bcolors.ENDC}{bcolors.WHITE}{metadata}{bcolors.ENDC}')
@@ -437,7 +454,8 @@ class Group():
         for sample in samples_without_group_set:
             groupings_dict['Group Not Found'][sample] = pd.DataFrame()
         self.groupings_dict = groupings_dict # will be passed to html summary
-        
+
+
     def calculate_average_coverage(self):
         """Calculate average depth of coverage for each sample, excluding zero values."""
         for sample, single_df in self.dataframes_names_updated.items():
@@ -454,19 +472,44 @@ class Group():
                 self.sample_coverage_dict[sample] = 0
 
     def group_selection(self, abs_pos):
-        sample_dict={}
+        sample_dict = {}
         group_found = False
         abs_pos = abs_pos.split(", ")
+        
+        # Separate normal and inverted positions
+        normal_positions = []
+        inverted_positions = []
+        
+        for pos in abs_pos:
+            if pos.endswith("!"):
+                # Remove the "!" and add to inverted positions
+                inverted_positions.append(pos[:-1])
+            else:
+                normal_positions.append(pos)
+        
         for sample, single_df in self.dataframe_essentials.items():
-            if set(abs_pos).issubset(single_df['abs_pos'].values): # all positions must be in dataframe column
+            file_positions = set(single_df['abs_pos'].values)
+            
+            # Check if sample qualifies for the group
+            qualifies = True
+            
+            # All normal positions must be present in the file
+            if normal_positions:
+                if not set(normal_positions).issubset(file_positions):
+                    qualifies = False
+            
+            # All inverted positions must NOT be present in the file
+            if inverted_positions and qualifies:
+                for inv_pos in inverted_positions:
+                    if inv_pos in file_positions:
+                        qualifies = False
+                        break
+            
+            # If sample qualifies, add it to the group
+            if qualifies and (normal_positions or inverted_positions):
                 group_found = True
                 sample_dict[sample] = self.dataframe_essentials[sample]
-            elif "!" in ''.join(abs_pos):
-                abs_pos = ''.join(abs_pos) # if inverted positions are used there should only be one position in the abs_pos list so it is being reverted back.
-                abs_pos_inverted = re.sub('!', '', abs_pos)
-                if not any(single_df['abs_pos'] == abs_pos_inverted):
-                    group_found = True
-                    sample_dict[sample] = self.dataframe_essentials[sample]
+        
         return group_found, sample_dict
 
     def list_expansion(self, target_list):
@@ -549,7 +592,7 @@ class Group():
                     print(f'\n\t#####\n\t##### {e}, Sample: {sample}\n\t#####\n')
 
             sample_df = sample_df[['abs_pos', 'ALT']] # no longer need other columns
-            # sample_df = sample_df.replace(np.nan, '-', regex=True) # change zero coverage to -
+            # sample_df = sample_df.replace(np.nan, '-') # change zero coverage to -
             df_merged = sample_df.merge(df_ref, left_on='abs_pos', right_on='abs_pos', how='outer') # finish normalizing if df doesn't include all position in group
             df_merged['ALT'] = np.where(df_merged['ALT'].notna(), df_merged['ALT'], df_merged['REF']) # merge REF from df_ref to ALT column
             df_merged['ALT'] = df_merged['ALT'].fillna('-')
@@ -568,7 +611,7 @@ class Group():
                 if self.debug:
                     print(f'\n\t#####\n\t##### {e}, Sample: {sample}\n\t#####\n')
             sample_df_parse_test = sample_df_parse_test[['abs_pos', 'ALT']] # no longer need other columns
-            # sample_df_parse_test = sample_df_parse_test.replace(np.nan, '-', regex=True) # change zero coverage to -
+            # sample_df_parse_test = sample_df_parse_test.replace(np.nan, '-') # change zero coverage to -
             df_merged_parse_test = sample_df_parse_test.merge(df_ref, left_on='abs_pos', right_on='abs_pos', how='outer') # finish normalizing if df doesn't include all position in group
             df_merged_parse_test['ALT'] = np.where(df_merged_parse_test['ALT'].notna(), df_merged_parse_test['ALT'], df_merged_parse_test['REF']) # merge REF from df_ref to ALT column
             df_merged_parse_test['ALT'] = df_merged_parse_test['ALT'].fillna('-')

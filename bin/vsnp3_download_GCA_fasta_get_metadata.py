@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.30"
+__version__ = "3.31"
 
 import os
 import sys
@@ -188,7 +188,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     NC_002945.4 # will NOT work, see vsnp3_download_fasta_gbk_gff_by_acc.py
 
     Usage:  module load datasets-14.12.0-gcc-9.2.0-46pggay
-            fasta_GCA_get_metadata.py -a GCA_000195835 -gr
+            vsnp3_download_GCA_fasta_get_metadata.py -a GCA_000195835 -gr
 
     Metadata will be downloaded along with the genome.  Metadata will be placed into an Excel file to be manipulated and used later.  Files can be immediately renamed with metadata info using --rename option.
 

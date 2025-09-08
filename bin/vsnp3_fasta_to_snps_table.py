@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.30"
+__version__ = "3.31"
 
 import os
 import subprocess
@@ -77,6 +77,7 @@ class Tree:
         self.raxml_version = raxml_version.split('\n')[2]
 
         os.system(f'{raxml} -s {fasta_alignments} -n raxml -m GTRCATI -o root -w {write_path} -p 456123 -T 4 > /dev/null 2>&1') #> /dev/null 2>&1
+        # os.system(f'{raxml} -s {fasta_alignments} -n raxml -m ASC_GTRGAMMA --asc-corr lewis  -o root -w {write_path} -p 456123 -T 4 > /dev/null 2>&1') #> /dev/null 2>&1
         try:
             newick = f'{write_path}/{tree_name}_{self.st}.tre'
             os.rename(f'{write_path}/RAxML_bestTree.raxml', newick)
@@ -175,10 +176,7 @@ class Tables:
         if self.df_alignments is None:
             reformated = f'{self.write_path}/reformated.fasta'
             with open(reformated, 'w') as reformat:
-                # try:
                 sequence = SeqIO.parse(self.fasta_alignments, "fasta")
-                # except AttributeError as e:
-                #     print(f'\n\t#####\n\t##### {e}, Reformated FASTA {reformated} \n\t#####\n')
                 for each in sequence:
                     print(f'>{each.description}\n{each.seq}', file=reformat)
             fasta_df = pd.read_csv(reformated, header=None, sep='^')
@@ -194,19 +192,91 @@ class Tables:
             fasta_df = fasta_df.set_index(0)
         else:
             fasta_df = self.df_alignments
-        with open(self.tree, 'rt') as tree_file: #must be the single line newick format.  Not Nexus which will be mutliline often with formating
+        
+        # Clean Unicode characters in the FASTA DataFrame index to match the main script processing
+        import unicodedata
+        
+        def clean_unicode(text):
+            # Normalize Unicode and convert to ASCII
+            normalized = unicodedata.normalize('NFKD', str(text))
+            ascii_text = normalized.encode('ascii', 'ignore').decode('ascii')
+            return ascii_text
+        
+        # Apply the same Unicode cleaning to FASTA sample names that was applied in main script
+        fasta_df.index = fasta_df.index.map(clean_unicode)
+        
+        with open(self.tree, 'rt') as tree_file:
             for line in tree_file:
                 line = re.sub('[:,]', '\n', line)
                 line = re.sub('[)(]', '', line)
                 line = re.sub('[0-9].*\.[0-9].*\n', '', line)
                 line = re.sub("'", '', line)
                 line = re.sub('root\n', '', line)
+        
         sample_order = line.split('\n')
         sample_order = list(filter(None, sample_order))
         sample_order.insert(0, 'root')
-        tree_order = fasta_df.loc[sample_order] #cascading1 table
-        tree_order2 = fasta_df.loc[sample_order] #cascading2 table
-        self.write_out_table(tree_order, 'sorted') #table_type, sorted or cascade, type is labeled on the output Excel file
+        
+        # Clean Unicode characters in sample_order to match the processing done in main script
+        cleaned_sample_order = []
+        for sample in sample_order:
+            if sample == 'root':
+                cleaned_sample_order.append(sample)
+            else:
+                cleaned_sample_order.append(clean_unicode(sample))
+        
+        sample_order = cleaned_sample_order
+        
+        # DEBUG: Print available samples and requested samples
+        if self.debug:
+            print(f"[{self.table_name}] Available samples in fasta_df:")
+            print(sorted(fasta_df.index.tolist()))
+            print(f"[{self.table_name}] Requested samples in sample_order:")
+            print(sorted(sample_order))
+        
+        # Filter sample_order to only include samples that exist in fasta_df
+        available_samples = set(fasta_df.index)
+        filtered_sample_order = [sample for sample in sample_order if sample in available_samples]
+        
+        # Check for missing samples
+        missing_samples = set(sample_order) - available_samples
+        if missing_samples:
+            print(f"Warning [{self.table_name}]: The following samples from the tree are not found in the FASTA data: {missing_samples}")
+            print(f"This may be due to Unicode character differences or name mismatches.")
+            
+            # Try to find close matches for missing samples
+            for missing_sample in missing_samples:
+                # Look for samples that might be close matches
+                possible_matches = []
+                for available_sample in available_samples:
+                    # Check if the missing sample is a substring of available sample or vice versa
+                    if missing_sample.lower() in available_sample.lower() or available_sample.lower() in missing_sample.lower():
+                        possible_matches.append(available_sample)
+                
+                if possible_matches:
+                    print(f"  [{self.table_name}] Possible matches for '{missing_sample}': {possible_matches}")
+                    # Use the first possible match
+                    best_match = possible_matches[0]
+                    filtered_sample_order.append(best_match)
+                    print(f"  [{self.table_name}] Using '{best_match}' as substitute for '{missing_sample}'")
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        final_sample_order = []
+        for sample in filtered_sample_order:
+            if sample not in seen:
+                final_sample_order.append(sample)
+                seen.add(sample)
+        
+        if self.debug:
+            print(f"[{self.table_name}] Final sample order: {final_sample_order}")
+        
+        # Use the filtered sample order
+        tree_order = fasta_df.loc[final_sample_order]
+        tree_order2 = fasta_df.loc[final_sample_order]
+        
+        # Continue with the rest of the existing method...
+        self.write_out_table(tree_order, 'sorted')
         
         ## Sort bias to total number of SNPs per column
         # count number of SNPs in each column
@@ -216,7 +286,7 @@ class Tables:
             column = tree_order[column_header]
             # for each element in the column
             for element in column:
-                if element != column[0] and element != '-': #column[0] is top row/root/reference, element is everything below it.
+                if element != column[0] and element != '-':
                     count = count + 1
             snp_per_column.append(count)
         row1 = pd.Series(snp_per_column, tree_order.columns, name="snp_per_column")
@@ -230,7 +300,7 @@ class Tables:
             # for each element in the column
             # skip the first element
             for element in column[1:]:
-                if element == column[0] or element == '-': # when - keep count, essentially skip -
+                if element == column[0] or element == '-':
                     count = count + 1
                 else:
                     break
@@ -244,12 +314,13 @@ class Tables:
 
         # remove snp_per_column and snp_from_top rows
         cascade_order_df = tree_order[:-2]
-        self.write_out_table(cascade_order_df, 'cascade1') #table_type, sorted or cascade, type is labeled on the output Excel file
+        self.write_out_table(cascade_order_df, 'cascade1')
         del column
         del row1
         del row2
         del snp_from_top
         del cascade_order_df
+        
         ## Start 2nd cascading table: sort bias to longest continues vertical SNP count per column
         row1 = pd.Series(snp_per_column, tree_order2.columns, name="snp_per_column")
         # get the snp count per column
@@ -262,9 +333,12 @@ class Tables:
             for ind, list_item in enumerate(column[1:].to_list()):
                 if list_item != column[0] and list_item != '-':
                     index_list_of_ref_differences.append(ind)
-            c = itertools.count()
-            val = max((list(g) for _, g in itertools.groupby(index_list_of_ref_differences, lambda x: x-next(c))), key=len)
-            snp_from_top.append(val[0]) #starting row number with longest continous SNPs in column
+            if index_list_of_ref_differences:  # Check if list is not empty
+                c = itertools.count()
+                val = max((list(g) for _, g in itertools.groupby(index_list_of_ref_differences, lambda x: x-next(c))), key=len)
+                snp_from_top.append(val[0])
+            else:
+                snp_from_top.append(0)  # Default value if no differences found
         row2 = pd.Series(snp_from_top, tree_order2.columns, name="snp_from_top")
         tree_order2 = pd.concat([tree_order2, pd.DataFrame([row1])])
         tree_order2 = pd.concat([tree_order2, pd.DataFrame([row2])])
@@ -274,7 +348,8 @@ class Tables:
 
         # remove snp_per_column and snp_from_top rows
         cascade_order_df = tree_order2[:-2]
-        self.write_out_table(cascade_order_df, 'cascade2') #table_type, sorted or cascade, type is labeled on the output Excel file
+        self.write_out_table(cascade_order_df, 'cascade2')
+
 
     ###Break and write out table
     # In Tables class, modify write_out_table method:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.30"
+__version__ = "3.31"
 
 import os
 import sys
@@ -51,14 +51,6 @@ class vSNP3_Step1(Setup):
             self.reference_type = None
             with open(self.FASTA) as f:
                 self.top_header_description = f.readline()
-        # elif os.path.isdir(reference_type): # -t directory name with full path
-        #     reference_options = Ref_Options(reference_type)
-        #     concatenated_FASTA = self.concat_fasta(reference_options.fasta)
-        #     self.excel_stats.excel_dict["Reference"] = f'{reference_type} Forced'
-        #     Setup.__init__(self, SAMPLE_NAME=SAMPLE_NAME, FASTA=concatenated_FASTA, FASTQ_R1=FASTQ_R1, FASTQ_R2=FASTQ_R2, gbk=reference_options.gbk, debug=debug)
-        #     self.reference_type = reference_type
-        #     with open(self.FASTA) as f:
-        #         self.top_header_description = f.readline()
         elif reference_type: # -t directory name
             reference_options = Ref_Options(reference_type)
             concatenated_FASTA = self.concat_fasta(reference_options.fasta)
@@ -75,6 +67,16 @@ class vSNP3_Step1(Setup):
             if self.best_reference.reference_set:
                 reference_options = Ref_Options(self.best_reference.reference_set)
             else:
+                print("\n" + "="*80)
+                print("🔥💥 REFERENCE FAILURE! 💥🔥")
+                print("="*80)
+                print("❌ NO REFERENCE TYPE AVAILABLE!")
+                print("❌ NO FASTA PROVIDED!")
+                print("\n🔧 SOLUTION:")
+                print("   Run: vsnp3_path_adder.py -s")
+                print("   Check: reference_options_paths.txt")
+                print("\n💡 This will show you available reference options!")
+                print("="*80 + "\n")
                 print(f'#### {self.sample_name} PROVIDE A REFERENCE, REFERENCE NOT FOUND')
                 self.excel_stats.excel_dict["Reference"] = f'PROVIDE A REFERENCE, REFERENCE NOT FOUND'
                 print(f'Getting Stats before exiting')

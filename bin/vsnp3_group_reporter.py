@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.30"
+__version__ = "3.31"
 
 import os
 import io
@@ -28,15 +28,34 @@ class GroupReporter:
         ws = pd.read_excel(excel_path, sheet_name=sheet_names[0])
         defining_snps = ws.iloc[0]
         defsnp_dict = dict(zip(defining_snps.index, defining_snps.to_numpy()))
-        defining_snps={}
-        inverted_defining_snps={}
+        
+        defining_snps = {}
+        inverted_defining_snps = {}
+        mixed_defining_snps = {}  # New dictionary for mixed definitions
+        
         for abs_pos, group in defsnp_dict.items():
-            if '!' in abs_pos:
-                inverted_defining_snps[abs_pos.replace('!', '')] = group
+            # Clean up the position string
+            clean_abs_pos = abs_pos.replace('###', '')
+            
+            # Check if this is a mixed definition (contains both regular and inverted positions)
+            positions = [pos.strip() for pos in clean_abs_pos.split(", ")]
+            has_regular = any(not pos.endswith('!') for pos in positions)
+            has_inverted = any(pos.endswith('!') for pos in positions)
+            
+            if has_regular and has_inverted:
+                # Mixed definition - keep as is for special handling
+                mixed_defining_snps[clean_abs_pos] = group
+            elif has_inverted and not has_regular:
+                # All positions are inverted
+                inverted_pos = clean_abs_pos.replace('!', '')
+                inverted_defining_snps[inverted_pos] = group
             else:
-                defining_snps[abs_pos.replace('###', '')] = group #capture groups blocked out by ###
+                # All positions are regular (no inversions)
+                defining_snps[clean_abs_pos] = group
+        
         self.defining_snps = defining_snps
         self.inverted_defining_snps = inverted_defining_snps
+        self.mixed_defining_snps = mixed_defining_snps
 
     def read_vcf(self, path):
         with open(path, 'r') as f:
@@ -107,34 +126,86 @@ class GroupReporter:
         tablename = os.path.basename(filename)
         defining_snps = self.defining_snps
         inverted_defining_snps = self.inverted_defining_snps
+        mixed_defining_snps = self.mixed_defining_snps
+        
         try:
             sample_groups_list = []
             defining_snp = False
-            # Using set operations more efficiently
-            defining_positions = set(defining_snps.keys())
+            
+            # Convert to sets for efficient operations
             found_positions_set = set(found_positions.keys())
             found_positions_mix_set = set(found_positions_mix.keys())
+            all_found_positions = found_positions_set.union(found_positions_mix_set)
             
-            # Check intersections with both found position sets
-            matching_positions = defining_positions.intersection(found_positions_set.union(found_positions_mix_set))
-            
-            for abs_position in matching_positions:
-                group = defining_snps[abs_position]
-                sample_groups_list.append(group)
-                if defining_positions.intersection(found_positions_mix_set):
-                    tablename = f'{os.path.basename(filename)} <font color="red">[[MIXED]]</font>'
-                defining_snp = True
+            # Check regular defining SNPs (may contain multiple positions)
+            for abs_position, group in defining_snps.items():
+                # Split positions by comma and strip whitespace
+                required_positions = [pos.strip() for pos in abs_position.split(", ")]
                 
-            # Check for inverted defining SNPs
-            inverted_positions = set(inverted_defining_snps.keys())
-            if not inverted_positions.intersection(found_positions_set.union(found_positions_mix_set)):
-                for abs_position in inverted_positions:
-                    group = inverted_defining_snps[abs_position]
+                # Check if this is a multi-position requirement
+                if len(required_positions) > 1:
+                    # For multiple positions, all must be found
+                    required_positions_set = set(required_positions)
+                    if required_positions_set.issubset(all_found_positions):
+                        sample_groups_list.append(group)
+                        defining_snp = True
+                        if found_positions_mix_set.intersection(required_positions_set):
+                            tablename = f'{os.path.basename(filename)} <font color="red">[[MIXED]]</font>'
+                else:
+                    # Single position check
+                    if abs_position in all_found_positions:
+                        sample_groups_list.append(group)
+                        defining_snp = True
+                        if abs_position in found_positions_mix_set:
+                            tablename = f'{os.path.basename(filename)} <font color="red">[[MIXED]]</font>'
+            
+            # Check inverted defining SNPs (positions that should NOT be present)
+            for abs_position, group in inverted_defining_snps.items():
+                # Split positions by comma and strip whitespace
+                positions_to_check = [pos.strip() for pos in abs_position.split(", ")]
+                
+                # For inverted positions, NONE of them should be found
+                positions_set = set(positions_to_check)
+                if not positions_set.intersection(all_found_positions):
                     sample_groups_list.append(group)
                     defining_snp = True
+            
+            # Handle mixed regular and inverted positions in the same group definition
+            # This handles cases like: "pos1, pos2, pos3!" where pos1 and pos2 must be present, pos3 must be absent
+            for abs_position, group in mixed_defining_snps.items():
+                positions = [pos.strip() for pos in abs_position.split(", ")]
+                
+                # Separate regular and inverted positions
+                regular_positions = []
+                inverted_positions = []
+                
+                for pos in positions:
+                    if pos.endswith('!'):
+                        inverted_positions.append(pos[:-1])  # Remove the '!' for checking
+                    else:
+                        regular_positions.append(pos)
+                
+                regular_positions_set = set(regular_positions) if regular_positions else set()
+                inverted_positions_set = set(inverted_positions) if inverted_positions else set()
+                
+                # Check conditions based on what we have
+                regular_match = True  # Default to True if no regular positions
+                inverted_match = True  # Default to True if no inverted positions
+                
+                if regular_positions:
+                    regular_match = regular_positions_set.issubset(all_found_positions)
+                
+                if inverted_positions:
+                    inverted_match = not inverted_positions_set.intersection(all_found_positions)
+                
+                if regular_match and inverted_match:
+                    sample_groups_list.append(group)
+                    defining_snp = True
+                    if regular_positions and found_positions_mix_set.intersection(regular_positions_set):
+                        tablename = f'{os.path.basename(filename)} <font color="red">[[MIXED]]</font>'
 
             if not defining_snp:  # extra step to get the group name when there are multiple defining snps for a group
-                for abs_position in defining_positions:
+                for abs_position in defining_snps.keys():
                     set_abs_position = set(abs_position.split(", "))
                     is_subset = set_abs_position.issubset(found_positions_set)
                     if is_subset:
@@ -144,7 +215,7 @@ class GroupReporter:
             if not sample_groups_list:
                 sample_groups_list = ['No defining SNPs']
             else:
-                sample_groups_list = sorted(sample_groups_list)
+                sample_groups_list = sorted(list(set(sample_groups_list)))  # Remove duplicates and sort
 
         except TypeError:
             message = f'File TypeError'
