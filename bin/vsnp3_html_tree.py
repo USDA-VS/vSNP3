@@ -8,7 +8,7 @@ from collections import defaultdict
 import os
 import math
 
-__version__ = "3.31"
+__version__ = "3.32"
 
 class Node:
     def __init__(self, name=None):
@@ -38,7 +38,7 @@ def get_snp_profile(seq, root_seq, positions):
     snps = []
     for i, (base, root_base) in enumerate(zip(seq, root_seq)):
         if base != root_base and base != '-':
-            snps.append(f"{positions[i]}:{root_base}->{base}")
+            snps.append("{pos}:{root_base}->{base}".format(pos=positions[i], root_base=root_base, base=base))
     return sorted(snps)
 
 def find_identical_samples(sequences, positions, sequences_df):
@@ -307,9 +307,9 @@ def count_leaves(node):
 
 def create_hover_text(snps, bootstrap=None):
     """Create hover text for branches including bootstrap values"""
-    text = f"SNPs ({len(snps)}):<br>" + "<br>".join(snps)
+    text = "SNPs ({snp_count}):<br>".format(snp_count=len(snps)) + "<br>".join(snps)
     if bootstrap is not None:
-        text = f"Bootstrap: {bootstrap:.1f}%<br><br>" + text
+        text = "Bootstrap: {bootstrap:.1f}%<br><br>".format(bootstrap=bootstrap) + text
     return text
 
 def create_hover_points(snps, bootstrap=None, chunk_size=30):
@@ -317,9 +317,13 @@ def create_hover_points(snps, bootstrap=None, chunk_size=30):
     chunks = []
     for i in range(0, len(snps), chunk_size):
         chunk = snps[i:i + chunk_size]
-        hover_text = f"SNPs {i+1}-{min(i+chunk_size, len(snps))} of {len(snps)}:<br>" + "<br>".join(chunk)
+        hover_text = "SNPs {start}-{end} of {total}:<br>".format(
+            start=i+1,
+            end=min(i+chunk_size, len(snps)),
+            total=len(snps)
+        ) + "<br>".join(chunk)
         if bootstrap is not None:
-            hover_text = f"Bootstrap: {bootstrap:.1f}%<br><br>" + hover_text
+            hover_text = "Bootstrap: {bootstrap:.1f}%<br><br>".format(bootstrap=bootstrap) + hover_text
         chunks.append(hover_text)
     return chunks
 
@@ -329,7 +333,7 @@ def add_bootstrap_annotation(fig, x, y, bootstrap, offset=10):
         fig.add_annotation(
             x=x,
             y=y + offset,
-            text=f"{bootstrap:.0f}",
+            text="{bootstrap:.0f}".format(bootstrap=bootstrap),
             showarrow=False,
             font=dict(size=10),
             yanchor='bottom'
@@ -695,7 +699,7 @@ def create_tree_visualization(df, output_file, input_filename, sample_coverage_d
             coverage_dict = dict(zip(sample_names, coverage_values))
             df_for_tree = df_for_tree.drop('Average Coverage', axis=1)
         except Exception as e:
-            print(f"Warning: Could not extract coverage data: {e}")
+            print("Warning: Could not extract coverage data: {error}".format(error=e))
             coverage_dict = {}
     
     rect_root = build_tree_rectangular(df_for_tree)
@@ -785,7 +789,7 @@ def create_tree_visualization(df, output_file, input_filename, sample_coverage_d
     fig_rect.add_annotation(
         x=scale_x + scale_length * snp_scale + 5,
         y=scale_y,
-        text=f"{scale_length} SNPs",
+        text="{scale_length} SNPs".format(scale_length=scale_length),
         showarrow=False,
         font=dict(size=9),
         xanchor='left',
@@ -796,7 +800,7 @@ def create_tree_visualization(df, output_file, input_filename, sample_coverage_d
     fig_rect.add_annotation(
         x=scale_x,
         y=scale_y - 25,
-        text=f"Total SNPs in tree: {total_snps}",
+        text="Total SNPs in tree: {total_snps}".format(total_snps=total_snps),
         showarrow=False,
         font=dict(size=9),
         xanchor='left',
@@ -831,7 +835,7 @@ def create_tree_visualization(df, output_file, input_filename, sample_coverage_d
     fig_unrooted.add_annotation(
         x=unrooted_scale_x + scale_length * unrooted_snp_scale + 5,
         y=unrooted_scale_y,
-        text=f"{scale_length} SNPs",
+        text="{scale_length} SNPs".format(scale_length=scale_length),
         showarrow=False,
         font=dict(size=9),
         xanchor='left',
@@ -842,7 +846,7 @@ def create_tree_visualization(df, output_file, input_filename, sample_coverage_d
     fig_unrooted.add_annotation(
         x=unrooted_scale_x,
         y=unrooted_scale_y - 25,
-        text=f"Total SNPs in tree: {total_snps}",
+        text="Total SNPs in tree: {total_snps}".format(total_snps=total_snps),
         showarrow=False,
         font=dict(size=9),
         xanchor='left',
@@ -860,9 +864,9 @@ def create_tree_visualization(df, output_file, input_filename, sample_coverage_d
         hovermode='closest'
     )
     
-    title_text = (f"{base_filename}<br>"
+    title_text = ("{base_filename}<br>"
                  "Hover over branches/dots to see SNPs and bootstrap values<br>"
-                 "Hover over sample names to see coverage information")
+                 "Hover over sample names to see coverage information").format(base_filename=base_filename)
     
     fig_rect.update_layout(
         title=dict(text=title_text, x=0.5),
@@ -873,8 +877,29 @@ def create_tree_visualization(df, output_file, input_filename, sample_coverage_d
         **layout_common
     )
     
+    fig_unrooted.update_layout(
+        title=dict(text=title_text + " - Unrooted Layout", x=0.5),
+        width=1200,
+        height=1200,
+        xaxis=dict(
+            range=[-max_range, max_range],
+            showgrid=False,
+            zeroline=False,
+            showticklabels=False,
+            scaleanchor="y",
+            scaleratio=1
+        ),
+        yaxis=dict(
+            range=[-max_range, max_range],
+            showgrid=False,
+            zeroline=False,
+            showticklabels=False
+        ),
+        **layout_common
+    )
+    
     # Create HTML with toggle button
-    html_content = f"""
+    html_content = """
     <html>
     <head>
         <title>Phylogenetic Tree Visualization</title>
@@ -898,8 +923,8 @@ def create_tree_visualization(df, output_file, input_filename, sample_coverage_d
         <div style="text-align: center;">
             <button class="button" onclick="toggleView()" id="toggleButton">Unrooted</button>
         </div>
-        <div id="rectangular-tree">{fig_rect.to_html(full_html=False)}</div>
-        <div id="unrooted-tree" style="display: none;">{fig_unrooted.to_html(full_html=False)}</div>
+        <div id="rectangular-tree">{rectangular_tree_html}</div>
+        <div id="unrooted-tree" style="display: none;">{unrooted_tree_html}</div>
         
         <script>
             function toggleView() {{
@@ -920,7 +945,10 @@ def create_tree_visualization(df, output_file, input_filename, sample_coverage_d
         </script>
     </body>
     </html>
-    """
+    """.format(
+        rectangular_tree_html=fig_rect.to_html(full_html=False),
+        unrooted_tree_html=fig_unrooted.to_html(full_html=False)
+    )
     
     # Save as interactive HTML
     with open(output_file, 'w', encoding='utf-8') as f:
@@ -1002,7 +1030,10 @@ def add_rectangular_traces(fig, node, parent=None, sample_coverage_dict=None):
         # Add coverage information to hover text if available
         hover_text = node.name
         if sample_coverage_dict and node.name in sample_coverage_dict:
-            hover_text = f"{node.name}<br>Coverage: {sample_coverage_dict[node.name]}X"
+            hover_text = "{name}<br>Coverage: {coverage}X".format(
+                name=node.name,
+                coverage=sample_coverage_dict[node.name]
+            )
         
         fig.add_annotation(
             x=node.x,
@@ -1092,7 +1123,7 @@ def add_unrooted_traces_improved(fig, node, parent=None, label_offset_base=20, p
                 fig.add_annotation(
                     x=x_mid + x_offset,
                     y=y_mid + y_offset,
-                    text=f"{node.bootstrap:.0f}",
+                    text="{bootstrap:.0f}".format(bootstrap=node.bootstrap),
                     showarrow=False,
                     font=dict(size=10),
                     bgcolor='rgba(255,255,255,0.8)'
@@ -1131,7 +1162,10 @@ def add_unrooted_traces_improved(fig, node, parent=None, label_offset_base=20, p
                         y_offset = node.unrooted_y + (i - (len(node.all_names)-1)/2) * 15
                         hover_text = name
                         if sample_coverage_dict and name in sample_coverage_dict:
-                            hover_text = f"{name}<br>Coverage: {sample_coverage_dict[name]}X"
+                            hover_text = "{name}<br>Coverage: {coverage}X".format(
+                                name=name,
+                                coverage=sample_coverage_dict[name]
+                            )
                         
                         fig.add_annotation(
                             x=node.unrooted_x,
@@ -1171,7 +1205,10 @@ def add_unrooted_traces_improved(fig, node, parent=None, label_offset_base=20, p
                 
                 hover_text = node.name
                 if sample_coverage_dict and node.name in sample_coverage_dict:
-                    hover_text = f"{node.name}<br>Coverage: {sample_coverage_dict[node.name]}X"
+                    hover_text = "{name}<br>Coverage: {coverage}X".format(
+                        name=node.name,
+                        coverage=sample_coverage_dict[node.name]
+                    )
                 
                 fig.add_annotation(
                     x=label_x,
@@ -1204,36 +1241,15 @@ def html_tree(file_path=None, sample_coverage_dict=None):
     try:
         df = pd.read_excel(input_file, engine='openpyxl')  # Updated to specify engine
         input_name = input_file.rsplit('.', 1)[0]
-        output_file = f"{input_name}_position_tree.html"
+        output_file = "{input_name}_position_tree.html".format(input_name=input_name)
         create_tree_visualization(df, output_file, input_file, sample_coverage_dict)
         return 0
         
     except Exception as e:
-        print(f"Error: {e}")
+        print("Error: {error}".format(error=e))
         import traceback
         traceback.print_exc()  # Added traceback for better error reporting
         return 1
     
 if __name__ == "__main__":
     exit(html_tree())
-    
-    fig_unrooted.update_layout(
-        title=dict(text=f"{title_text} - Unrooted Layout", x=0.5),
-        width=1200,
-        height=1200,
-        xaxis=dict(
-            range=[-max_range, max_range],
-            showgrid=False,
-            zeroline=False,
-            showticklabels=False,
-            scaleanchor="y",
-            scaleratio=1
-        ),
-        yaxis=dict(
-            range=[-max_range, max_range],
-            showgrid=False,
-            zeroline=False,
-            showticklabels=False
-        ),
-        **layout_common
-    )

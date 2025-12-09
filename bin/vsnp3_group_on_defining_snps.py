@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.31"
+__version__ = "3.32"
 
 import os
 import sys
@@ -52,7 +52,7 @@ def run_with_timeout(func, timeout_seconds, *args, **kwargs):
     if process.is_alive():
         process.terminate()
         process.join()
-        raise TimeoutError(f"Function took longer than {timeout_seconds} seconds")
+        raise TimeoutError("Function took longer than {} seconds".format(timeout_seconds))
     
     return queue.get()
     
@@ -70,7 +70,7 @@ class bcolors:
 class Group():
     ''' 
     '''
-    def __init__(self, cwd=None, metadata=None, excel_remove=None, gbk_list=None, defining_snps=None, dataframes=None, pickle_file=None, abs_pos=None, group=None, all_vcf=None, find_new_filters=None, no_filters=True, qual_threshold=150, n_threshold=50, mq_threshold=56, show_groups=False, hash_groups=None, html_tree=False, dp=False, debug=False):
+    def __init__(self, cwd=None, metadata=None, excel_remove=None, gbk_list=None, defining_snps=None, dataframes=None, pickle_file=None, abs_pos=None, group=None, all_vcf=None, find_new_filters=None, no_filters=True, qual_threshold=150, n_threshold=50, mq_threshold=56, show_groups=False, hash_groups=None, html_tree=False, dp=False, filter_density=False, density_threshold=3, density_window=20, debug=False):
 
         self.qual_threshold = qual_threshold
         self.n_threshold = n_threshold
@@ -83,6 +83,11 @@ class Group():
         self.html_tree = html_tree
         self.dp = dp
         self.debug = debug
+        self.filter_density = filter_density
+        self.density_threshold = density_threshold
+        self.density_window = density_window
+        self.density_filtered_positions = []  # Track positions filtered by density
+        metadata_test = False
         
         self.sample_coverage_dict = {}
 
@@ -94,7 +99,7 @@ class Group():
         cpu_count = int(multiprocessing.cpu_count() / 1.2)
         
         if abs_pos and group:
-            print(f'Dropping {defining_snps} for single grouping')
+            print('Dropping {} for single grouping'.format(defining_snps))
             defining_snps = None
             no_filters = True
         
@@ -198,18 +203,29 @@ class Group():
             else:
                 metadata_test = False
 
-        print(f'{bcolors.RED}\nDefining SNPs: {bcolors.ENDC}{bcolors.WHITE}{defining_snps}{bcolors.ENDC}')
-        print(f'{bcolors.RED}Metadata: {bcolors.ENDC}{bcolors.WHITE}{metadata}{bcolors.ENDC}')
-        print(f'{bcolors.RED}Remove From Analysis: {bcolors.ENDC}{bcolors.WHITE}{excel_remove}{bcolors.ENDC}')
-        print(f'{bcolors.RED}gbks: {bcolors.ENDC}', end="")
+        print('{}Defining SNPs: {}{}{}'.format(bcolors.RED, bcolors.ENDC, bcolors.WHITE, defining_snps))
+        print('{}{}'.format(bcolors.ENDC, ''))
+        print('{}Metadata: {}{}{}'.format(bcolors.RED, bcolors.ENDC, bcolors.WHITE, metadata))
+        print('{}{}'.format(bcolors.ENDC, ''))
+        print('{}Remove From Analysis: {}{}{}'.format(bcolors.RED, bcolors.ENDC, bcolors.WHITE, excel_remove))
+        print('{}{}'.format(bcolors.ENDC, ''))
+        print('{}gbks: {}'.format(bcolors.RED, bcolors.ENDC), end="")
         if gbk_list:
             for each in gbk_list:
-                print(f'\t{bcolors.WHITE}{each}{bcolors.ENDC}')
+                print('\t{}{}{}'.format(bcolors.WHITE, each, bcolors.ENDC))
         else:
-            print(f'\t{bcolors.WHITE}No gbk{bcolors.ENDC}')
+            print('\t{}No gbk{}'.format(bcolors.WHITE, bcolors.ENDC))
             gbk_list = None
 
-        print(f'\nSorting defining SNPs  Selection Time: {datetime.now() - self.startTime}\n')
+        # Log density filtering status
+        if self.filter_density:
+            print('{}Density filtering: {}{}ENABLED - filtering SNPs when >={} found within {} bp window{}'.format(
+                bcolors.RED, bcolors.ENDC, bcolors.WHITE, self.density_threshold, self.density_window, bcolors.ENDC))
+        else:
+            print('{}Density filtering: {}{}DISABLED{}'.format(
+                bcolors.RED, bcolors.ENDC, bcolors.WHITE, bcolors.ENDC))
+
+        print('\nSorting defining SNPs  Selection Time: {}\n'.format(datetime.now() - self.startTime))
 
         if pickle_file:
             with open(pickle_file, 'rb') as handle:
@@ -258,7 +274,7 @@ class Group():
             try:
                 single_df = single_df[(single_df['QUAL'] > self.qual_threshold) & (single_df['AC'] == 2) & (single_df['REF'].str.len() == 1) & (single_df['ALT'].str.len() == 1) & (single_df['MQ'] >= self.mq_threshold)]
             except AttributeError:
-                print(f'\n### Error with sample {sample}\nSee VCF file and rerun\n')
+                print('\n### Error with sample {}\nSee VCF file and rerun\n'.format(sample))
                 sys.exit(1)
 
             mq_dictionary = single_df[['abs_pos', 'MQ']].set_index('abs_pos').to_dict()['MQ']
@@ -266,7 +282,7 @@ class Group():
                 map_quality_dict[abs_pos].append(MQ)
 
             if single_df.empty:
-                self.vcf_bad_list.append(f'{sample}  Dataframe Empty at vsnp3_group_on_defining_snps.py ~ line 175.  Thresholds (QUAL, MQ, etc) may not be being met and causing no positions to be selected.')
+                self.vcf_bad_list.append('{}  Dataframe Empty at vsnp3_group_on_defining_snps.py ~ line 175.  Thresholds (QUAL, MQ, etc) may not be being met and causing no positions to be selected.'.format(sample))
             else:
                 dataframe_essentials[sample] = single_df
             sample_dict = dict(zip(single_df.abs_pos, single_df.ALT))
@@ -281,6 +297,11 @@ class Group():
         self.average_mq_df = pd.DataFrame.from_dict(mq_averages, orient='index')
         self.average_mq_df = self.average_mq_df.reset_index()
         self.average_mq_df.columns = ['abs_pos', 'MQ']
+        
+        # Apply density filtering if enabled
+        if self.filter_density:
+            self.apply_density_filter()
+        
         if gbk_list:
             annotation = Annotation(gbk_list=gbk_list)
             for abs_pos, snp_nt in abs_pos_nt_dict.items():
@@ -288,9 +309,12 @@ class Group():
                 if annotation.reference_base_code == 'n/a':
                     annotation_dict[abs_pos] = 'position not annotated'
                 else:
-                    annotation_dict[abs_pos] = f'{annotation.reference_base_code}->{annotation.snp_base_code}, {annotation.gene}:{annotation.ref_aa}{annotation.aa_residue_pos}{annotation.snp_aa}, {annotation.product}, {annotation.mutation_type}'
+                    annotation_dict[abs_pos] = '{}->{}, {}:{}{}{}, {}, {}'.format(
+                        annotation.reference_base_code, annotation.snp_base_code,
+                        annotation.gene, annotation.ref_aa, annotation.aa_residue_pos,
+                        annotation.snp_aa, annotation.product, annotation.mutation_type)
         self.annotation_df = pd.DataFrame(annotation_dict.items(), columns=['abs_pos', 'annotation'])
-        print(f'\n\tGetting dataframe essentials  Selection Time: {datetime.now() - self.startTime}\n')
+        print('\n\tGetting dataframe essentials  Selection Time: {}\n'.format(datetime.now() - self.startTime))
 
         if defining_snps_dict:
             self.startTime = datetime.now()
@@ -313,7 +337,7 @@ class Group():
                     groupings_dict[group] = sample_dict #defining_snps_dict[abs_pos] provides group
                     
             # else:
-            #     print(f'Grouping: Pool processing with {cpu_count} cpus...')
+            #     print('Grouping: Pool processing with {} cpus...'.format(cpu_count))
             #     with futures.ThreadPoolExecutor(max_workers=cpu_count) as pool: #ProcessPoolExecutor ThreadPoolExecutor ## thread call is more efficient
             #         for group_found, sample_dict in pool.map(self.group_selection, defining_snps_list):
             #             if group_found:
@@ -331,7 +355,7 @@ class Group():
                 combined_lists = combined_lists + list(samples.keys())
             samples_with_group_set = set(combined_lists)
             samples_without_group_set = samples_with_dataframes_set - samples_with_group_set
-            print(f'\n\tGroup Selection Time: {datetime.now() - self.startTime}\n')
+            print('\n\tGroup Selection Time: {}\n'.format(datetime.now() - self.startTime))
         else:
             samples_without_group_set = samples_with_dataframes_set
             groupings_dict = {}
@@ -343,7 +367,7 @@ class Group():
                 groupings_dict['all_vcf'] = self.dataframe_essentials
 
         self.groupings_dict = groupings_dict
-        print(f'All relevant positions by group')
+        print('All relevant positions by group')
         self.startTime = datetime.now()
         #Get all position in each group
         ambigious_lookup={}
@@ -381,8 +405,8 @@ class Group():
             for group_dict_of_df in groupings_dict_list:
                 if len(group_dict_of_df[1]) > 3:
                     for df in group_sample_dict:
-                        postion_list = open(f'{group_dict_of_df[0]}_postion_list.txt', 'w')
-                        postion_detail_list = open(f'{group_dict_of_df[0]}_postion_detail_list.txt', 'w')
+                        postion_list = open('{}_postion_list.txt'.format(group_dict_of_df[0]), 'w')
+                        postion_detail_list = open('{}_postion_detail_list.txt'.format(group_dict_of_df[0]), 'w')
                         if not no_filters:
                             print('New positions to filter found after current filter positions applied but before noninformative SNP are removed', file=postion_detail_list)
                         else:
@@ -398,19 +422,20 @@ class Group():
                             if len(dd) > 3:
                                 if dd.QUAL.mean() < 700 and dd.QUAL.max() < 1300 or dd.MQ.mean() < 40:
                                     print(vv, file=postion_list)
-                                    print(f'{vv} Average QUAL: {dd.QUAL.mean():0.2f}, Max QUAL: {dd.QUAL.max():0.2f}, Average MQ: {dd.MQ.mean():0.2f}', file=postion_detail_list)
+                                    print('{} Average QUAL: {:.2f}, Max QUAL: {:.2f}, Average MQ: {:.2f}'.format(
+                                        vv, dd.QUAL.mean(), dd.QUAL.max(), dd.MQ.mean()), file=postion_detail_list)
                         postion_list.close()
                         postion_detail_list.close()
-        print(f'\n\tAll relevant positions by group {datetime.now() - self.startTime}\n')
+        print('\n\tAll relevant positions by group {}\n'.format(datetime.now() - self.startTime))
 
-        print(f'FASTAs out and RAxML trees')
+        print('FASTAs out and RAxML trees')
         self.startTime = datetime.now()
         group_fasta_dict={}
         group_dataframe_dict={}
         remove_list=[]
         for group, sample_dict in finished_groupings_dict.items():
             os.makedirs(group, exist_ok=True)
-            fasta = f'{group}/{group}-{self.st}.fasta'
+            fasta = '{}/{}-{}.fasta'.format(group, group, self.st)
             self.dict_to_fasta(sample_dict, fasta)
             num_lines=0
             with open(fasta) as opened_file:
@@ -422,8 +447,8 @@ class Group():
                     else:
                         read_length = len(string)
             if num_lines < 7 or read_length <= 3 : # ie 4 or more FASTAs and sequence length > 3 required
-                with open(f'{group}/TOO_FEW_SAMPLES_OR_SHORT_SEQUENCE_TO_BUILD_TREE', 'w') as message_out:
-                    print(f'check sample numbers or sequence lengths', file=message_out)
+                with open('{}/TOO_FEW_SAMPLES_OR_SHORT_SEQUENCE_TO_BUILD_TREE'.format(group), 'w') as message_out:
+                    print('check sample numbers or sequence lengths', file=message_out)
                 remove_list.append(group)
             else:
                 group_fasta_dict[group] = fasta
@@ -444,8 +469,8 @@ class Group():
                 for tree in pool.map(self.raxml_table_build, working_group_list):
                     pass
 
-        print(f'\n\tFASTAs, RAxML and HTML trees {datetime.now() - self.startTime}\n')
-        # print(f'\n\nTotal Time: {datetime.now() - self.beginTime}\n')
+        print('\n\tFASTAs, RAxML and HTML trees {}\n'.format(datetime.now() - self.startTime))
+        # print('\n\nTotal Time: {}\n'.format(datetime.now() - self.beginTime))
 
         #Add back those that where a group was not found
         if 'Group Not Found' not in groupings_dict:
@@ -455,6 +480,91 @@ class Group():
             groupings_dict['Group Not Found'][sample] = pd.DataFrame()
         self.groupings_dict = groupings_dict # will be passed to html summary
 
+    def apply_density_filter(self):
+        """Apply density filtering to remove SNPs when threshold+ SNPs are found within specified window"""
+        print("Applying density filtering (>={} SNPs within {} bp window)...".format(
+            self.density_threshold, self.density_window))
+        
+        # Log file for density filtering
+        density_log = open('{}/density_filtering_log.txt'.format(self.cwd), 'w', encoding='utf-8')
+        print("Density filtering applied: SNPs filtered when >={} SNPs found within {} bp window".format(
+            self.density_threshold, self.density_window), file=density_log)
+        print("Filtering applied on: {}".format(datetime.now().strftime('%Y-%m-%d %H:%M:%S')), file=density_log)
+        print("=" * 60, file=density_log)
+        
+        positions_to_remove = set()
+        total_positions_examined = 0
+        regions_filtered = 0
+        
+        # Group positions by chromosome for efficient processing
+        chrom_positions = defaultdict(list)
+        for sample_name, df in self.dataframe_essentials.items():
+            for _, row in df.iterrows():
+                chrom, pos_str = row['abs_pos'].split(':')
+                pos = int(pos_str)
+                chrom_positions[chrom].append(pos)
+        
+        # Process each chromosome separately
+        for chrom, positions in chrom_positions.items():
+            # Remove duplicates and sort
+            unique_positions = sorted(set(positions))
+            total_positions_examined += len(unique_positions)
+            
+            print("Examining chromosome {} with {} positions".format(chrom, len(unique_positions)), file=density_log)
+            
+            # Check each position for density using sliding window approach
+            for i, pos in enumerate(unique_positions):
+                # Define window: check positions within density_window bp
+                window_start = pos
+                window_end = pos + self.density_window - 1  # -1 because we want inclusive range
+                
+                # Count SNPs in window (including current position)
+                snps_in_window = []
+                for check_pos in unique_positions:
+                    if window_start <= check_pos <= window_end:
+                        snps_in_window.append(check_pos)
+                
+                # If threshold+ SNPs in window, mark all for removal
+                if len(snps_in_window) >= self.density_threshold:
+                    regions_filtered += 1
+                    print("Dense region found: positions {} (window {}-{})".format(
+                        snps_in_window, window_start, window_end), file=density_log)
+                    for dense_pos in snps_in_window:
+                        abs_pos = "{}:{}".format(chrom, dense_pos)
+                        positions_to_remove.add(abs_pos)
+                        self.density_filtered_positions.append(abs_pos)
+        
+        # Remove dense positions from all samples
+        original_counts = {}
+        filtered_counts = {}
+        
+        for sample_name, df in self.dataframe_essentials.items():
+            original_counts[sample_name] = len(df)
+            filtered_df = df[~df['abs_pos'].isin(positions_to_remove)]
+            self.dataframe_essentials[sample_name] = filtered_df
+            filtered_counts[sample_name] = len(filtered_df)
+        
+        # Log summary statistics
+        print("=" * 60, file=density_log)
+        print("SUMMARY:", file=density_log)
+        print("Filtering criteria: >={} SNPs within {} bp window".format(
+            self.density_threshold, self.density_window), file=density_log)
+        print("Total positions examined: {}".format(total_positions_examined), file=density_log)
+        print("Dense regions identified: {}".format(regions_filtered), file=density_log)
+        print("Positions filtered: {}".format(len(positions_to_remove)), file=density_log)
+        print("", file=density_log)
+        print("Per-sample filtering results:", file=density_log)
+        
+        for sample_name in original_counts:
+            removed = original_counts[sample_name] - filtered_counts[sample_name]
+            print("{}: {} -> {} (removed {})".format(
+                sample_name, original_counts[sample_name], filtered_counts[sample_name], removed), file=density_log)
+        
+        density_log.close()
+        
+        print("Density filtering complete: {} positions removed from {} dense regions".format(
+            len(positions_to_remove), regions_filtered))
+        print("Detailed log written to: {}/density_filtering_log.txt".format(self.cwd))
 
     def calculate_average_coverage(self):
         """Calculate average depth of coverage for each sample, excluding zero values."""
@@ -522,7 +632,7 @@ class Group():
                 try:
                     chrom, sequence_range = list_entry.split(":")
                 except ValueError as e:
-                    raise type(e)(str(e) + f' \n#### error in Defining SNPs/Filter worksheet\n#### see value "{list_entry}"').with_traceback(sys.exc_info()[2])
+                    raise type(e)(str(e) + ' \n#### error in Defining SNPs/Filter worksheet\n#### see value "{}"'.format(list_entry)).with_traceback(sys.exc_info()[2])
                 list_entry = sequence_range.split("-")
                 for position in range(int(list_entry[0].replace(',', '')), int(list_entry[1].replace(',', '')) + 1):
                     expanded_list.append(chrom + ":" + str(position))
@@ -531,10 +641,10 @@ class Group():
     def dict_to_fasta(self, sample_dict, fasta): #sample_dict = [file name]:snp dataframe
         with open(fasta, 'w') as write_out:
             for name, df in sample_dict.items():
-                print(f'>{name}', file=write_out)
+                print('>{}'.format(name), file=write_out)
                 try:
                     df = df.sort_values(by=['abs_pos']) # sorting ensures positions are aligned
-                    # print(f'{name}: {len("".join(df["ALT"].to_list()))}') # use to troubleshoot if FASTAs are not aligning to the same length
+                    # print('{}: {}'.format(name, len("".join(df["ALT"].to_list())))) # use to troubleshoot if FASTAs are not aligning to the same length
                     print("".join(df['ALT'].to_list()), file=write_out)
                 except KeyError:
                     pass
@@ -547,13 +657,9 @@ class Group():
             return group_df.T
         except pd.errors.InvalidIndexError as e:
             if self.debug:
-                print(f'\n\t#####\n\t##### {e}, Group {group} \n\t#####\n')
+                print('\n\t#####\n\t##### {}, Group {} \n\t#####\n'.format(e, group))
             return pd.DataFrame()
 
-    def make_groupings(self, group_sample_dict):
-        df_list=[]
-        group, sample_dict = group_sample_dict # sample_dict is from dataframe_essentials, ie good SNPs.
-        
     def make_groupings(self, group_sample_dict):
         df_list=[]
         group, sample_dict = group_sample_dict # sample_dict is from dataframe_essentials, ie good SNPs.
@@ -579,7 +685,7 @@ class Group():
                     sample_df.at[index, 'ALT'] = self.ambigious_lookup[row['REF'] + row['ALT']]
             except (KeyError, TypeError) as e:
                 if self.debug:
-                    print(f'\n\t#####\n\t##### {e}, Sample: {sample}\n\t#####\n')
+                    print('\n\t#####\n\t##### {}, Sample: {}\n\t#####\n'.format(e, sample))
             #change alt to N if QUAL 50 - 150
             sample_df.loc[(sample_df['QUAL'] >= self.n_threshold) & (sample_df['QUAL'] < self.qual_threshold) & (sample_df['ALT'] != '-'), 'ALT'] = 'N' # this will overwrite ambigious calls
             # < 50 will default to REF... change ALT to REF
@@ -589,7 +695,7 @@ class Group():
                 sample_df.loc[mask, 'ALT'] = sample_df['REF']
             except (ValueError) as e:
                 if self.debug:
-                    print(f'\n\t#####\n\t##### {e}, Sample: {sample}\n\t#####\n')
+                    print('\n\t#####\n\t##### {}, Sample: {}\n\t#####\n'.format(e, sample))
 
             sample_df = sample_df[['abs_pos', 'ALT']] # no longer need other columns
             # sample_df = sample_df.replace(np.nan, '-') # change zero coverage to -
@@ -609,7 +715,7 @@ class Group():
                 sample_df_parse_test.loc[sample_df_parse_test['QUAL'] < self.qual_threshold, 'ALT'] = sample_df_parse_test['ALT'] # change n_threshold from above to qual threshold skipping the Ns when determining if position is parsimonious AND changed to 'ALT'.  So, if there are just a few low quality represented the SNP position will be seen as parisomonious uninformative and removed.
             except (ValueError) as e:
                 if self.debug:
-                    print(f'\n\t#####\n\t##### {e}, Sample: {sample}\n\t#####\n')
+                    print('\n\t#####\n\t##### {}, Sample: {}\n\t#####\n'.format(e, sample))
             sample_df_parse_test = sample_df_parse_test[['abs_pos', 'ALT']] # no longer need other columns
             # sample_df_parse_test = sample_df_parse_test.replace(np.nan, '-') # change zero coverage to -
             df_merged_parse_test = sample_df_parse_test.merge(df_ref, left_on='abs_pos', right_on='abs_pos', how='outer') # finish normalizing if df doesn't include all position in group
@@ -656,13 +762,13 @@ class Group():
         return df
 
     def raxml_table_build(self, group):
-        tree = Tree(fasta_alignments=self.group_fasta_dict[group], write_path=f'{self.cwd}/{group}', tree_name=group)
+        tree = Tree(fasta_alignments=self.group_fasta_dict[group], write_path='{}/{}'.format(self.cwd, group), tree_name=group)
         tables = Tables(
             df_alignments=self.group_dataframe_dict[group],
             tree=tree.newick,
             gbk=self.annotation_df,
             mq=self.average_mq_df,
-            write_path=f'{self.cwd}/{group}',
+            write_path='{}/{}'.format(self.cwd, group),
             groupings_dict=self.groupings_dict,
             show_groups=self.show_groups,
             table_name=group,
@@ -676,39 +782,44 @@ class Group():
             try:
                 run_with_timeout(html_tree, 900, tables.table_to_tree_path)
             except TimeoutError:
-                print(f'{group} HTML tree generation timed out after 15 minutes')
-        if __name__ == "__main__": # execute if directly access by the interpreter
-            parser = argparse.ArgumentParser(prog='PROG', formatter_class=argparse.RawDescriptionHelpFormatter, description=textwrap.dedent('''\
+                print('{} HTML tree generation timed out after 15 minutes'.format(group))
 
-            ---------------------------------------------------------
-            Usage:
-            vsnp3_group_on_defining_snps.py -p dictionary_of_dataframes.pickle -abs_pos NC_002945.4:1295549 -group test_group -m path/to/metadata.xlsx -b /path/to/*gbk
 
-            '''), epilog='''---------------------------------------------------------''')
+if __name__ == "__main__": # execute if directly access by the interpreter
+    parser = argparse.ArgumentParser(prog='PROG', formatter_class=argparse.RawDescriptionHelpFormatter, description=textwrap.dedent('''\
 
-            parser.add_argument('-p', '--pickle_file', action='store', dest='pickle_file', required=False, help='Pickle file: dictionary of dataframes')
-            parser.add_argument('-b', '--gbk', nargs='*', dest='gbk', required=False, default=None, help='Optional: gbk to annotate VCF file.  Multiple can be specified with wildcard')
-            parser.add_argument('-m', '--metadata', action='store', dest='metadata', default=None, required=False, help='Explicit metadata file.  Two column Excel file --> Column One: VCF file name, Column Two: Updated name')
-            parser.add_argument('-s', '--defining_snps', action='store', dest='defining_snps', required=False, help='Defining SNPs with positions to filter.  See template_define_filter.xlsx')
-            parser.add_argument('-abs_pos', '--abs_pos', action='store', dest='abs_pos', required=False, help='Must be supplied with --group option.  Format as chrom in VCF, likely chrom:10000... NC_002945.4:2138896.  Run: `vsnp3_step2.py --wd ../original -da` to obtain pickle for entire set, isolate pickle file and run `vsnp3_group_on_defining_snps.py -p dictionary_of_dataframes.pickle -a NC_002945.4:1295549`')
-            parser.add_argument('-group', '--group', action='store', dest='group', required=False, help='Must be supplied with --abs_pos option')
-            parser.add_argument('-w', '--qual_threshold', action='store', dest='qual_threshold', default=150, required=False, help='Optional: Minimum QUAL threshold for calling a SNP')
-            parser.add_argument('-x', '--n_threshold', action='store', dest='n_threshold', default=50, required=False, help='Optional: Minimum N threshold.  SNPs between this and qual_threshold are reported as N')
-            parser.add_argument('-y', '--mq_threshold', action='store', dest='mq_threshold', default=56, required=False, help='Optional: At least one position per group must have this minimum MQ threshold to be called.')
-            parser.add_argument('-t', '--reference_type', action='store', dest='reference_type', required=False, help='Reference type group/directory with dependencies')
-            parser.add_argument('-d', '--debug', action='store_true', dest='debug', help='Optional: Keep debugging files and run without pooling')
-            parser.add_argument('-v', '--version', action='version', version=f'{os.path.basename(__file__)}: version {__version__}')
-            args = parser.parse_args()
+    ---------------------------------------------------------
+    Usage:
+    vsnp3_group_on_defining_snps.py -p dictionary_of_dataframes.pickle -abs_pos NC_002945.4:1295549 -group test_group -m path/to/metadata.xlsx -b /path/to/*gbk
 
-            if args.reference_type:
-                ro = Ref_Options(args.reference_type)
-                if ro.metadata and not args.metadata:
-                    args.metadata = ro.metadata
-                if ro.excel and not args.defining_snps:
-                    args.defining_snps = ro.excel
-                if ro.gbk and not args.gbk:
-                    args.gbk = ro.gbk
+    '''), epilog='''---------------------------------------------------------''')
 
-            group = Group(pickle_file=args.pickle_file, metadata=args.metadata, gbk_list=args.gbk, defining_snps=args.defining_snps, abs_pos=args.abs_pos, group=args.group, qual_threshold=int(args.qual_threshold), n_threshold=int(args.n_threshold), mq_threshold=int(args.mq_threshold), debug=args.debug)
+    parser.add_argument('-p', '--pickle_file', action='store', dest='pickle_file', required=False, help='Pickle file: dictionary of dataframes')
+    parser.add_argument('-b', '--gbk', nargs='*', dest='gbk', required=False, default=None, help='Optional: gbk to annotate VCF file.  Multiple can be specified with wildcard')
+    parser.add_argument('-m', '--metadata', action='store', dest='metadata', default=None, required=False, help='Explicit metadata file.  Two column Excel file --> Column One: VCF file name, Column Two: Updated name')
+    parser.add_argument('-s', '--defining_snps', action='store', dest='defining_snps', required=False, help='Defining SNPs with positions to filter.  See template_define_filter.xlsx')
+    parser.add_argument('-abs_pos', '--abs_pos', action='store', dest='abs_pos', required=False, help='Must be supplied with --group option.  Format as chrom in VCF, likely chrom:10000... NC_002945.4:2138896.  Run: `vsnp3_step2.py --wd ../original -da` to obtain pickle for entire set, isolate pickle file and run `vsnp3_group_on_defining_snps.py -p dictionary_of_dataframes.pickle -a NC_002945.4:1295549`')
+    parser.add_argument('-group', '--group', action='store', dest='group', required=False, help='Must be supplied with --abs_pos option')
+    parser.add_argument('-w', '--qual_threshold', action='store', dest='qual_threshold', default=150, required=False, help='Optional: Minimum QUAL threshold for calling a SNP')
+    parser.add_argument('-x', '--n_threshold', action='store', dest='n_threshold', default=50, required=False, help='Optional: Minimum N threshold.  SNPs between this and qual_threshold are reported as N')
+    parser.add_argument('-y', '--mq_threshold', action='store', dest='mq_threshold', default=56, required=False, help='Optional: At least one position per group must have this minimum MQ threshold to be called.')
+    parser.add_argument('-t', '--reference_type', action='store', dest='reference_type', required=False, help='Reference type group/directory with dependencies')
+    parser.add_argument('--filter_density', action='store_true', dest='filter_density', help='Optional: Remove SNPs when density threshold is exceeded within specified window size')
+    parser.add_argument('--density_threshold', action='store', dest='density_threshold', type=int, default=3, help='Optional: Minimum number of SNPs required to trigger density filtering (default: 3)')
+    parser.add_argument('--density_window', action='store', dest='density_window', type=int, default=20, help='Optional: Window size in base pairs for density filtering (default: 20)')
+    parser.add_argument('-d', '--debug', action='store_true', dest='debug', help='Optional: Keep debugging files and run without pooling')
+    parser.add_argument('-v', '--version', action='version', version='{}: version {}'.format(os.path.basename(__file__), __version__))
+    args = parser.parse_args()
+
+    if args.reference_type:
+        ro = Ref_Options(args.reference_type)
+        if ro.metadata and not args.metadata:
+            args.metadata = ro.metadata
+        if ro.excel and not args.defining_snps:
+            args.defining_snps = ro.excel
+        if ro.gbk and not args.gbk:
+            args.gbk = ro.gbk
+
+    group = Group(pickle_file=args.pickle_file, metadata=args.metadata, gbk_list=args.gbk, defining_snps=args.defining_snps, abs_pos=args.abs_pos, group=args.group, qual_threshold=int(args.qual_threshold), n_threshold=int(args.n_threshold), mq_threshold=int(args.mq_threshold), filter_density=args.filter_density, density_threshold=args.density_threshold, density_window=args.density_window, debug=args.debug)
 
 # Created 2021 by Tod Stuber

@@ -1,12 +1,13 @@
 #!/usr/bin/env python
 
-__version__ = "3.31"
+__version__ = "3.32"
 
 import os
 import re
 import pandas as pd
 import argparse
 import textwrap
+import sys
 
 
 parser = argparse.ArgumentParser(prog='PROG', formatter_class=argparse.RawDescriptionHelpFormatter, description=textwrap.dedent('''\
@@ -32,9 +33,12 @@ table_minimap2 = args.table2
 try:
     df_bwa = pd.read_excel(table_bwa, index_col=0)
     df_mp = pd.read_excel(table_minimap2, index_col=0)
+except FileNotFoundError as e:
+    print(f"Error: File not found - {e}", file=sys.stderr)
+    sys.exit(1)
 except Exception as e:
-    print(f"Error reading Excel files: {e}")
-    exit(1)
+    print(f"Error reading Excel files: {e}", file=sys.stderr)
+    sys.exit(1)
 
 # Get samples lists with more robust error handling
 samples_bwa = df_bwa.index.tolist()
@@ -64,48 +68,57 @@ positions_bwa_table_only = list(set(pos_bwa) - set(pos_mp))
 positions_mp_table_only = list(set(pos_mp) - set(pos_bwa))
 
 # Prepare filenames
-bwa_name = re.sub('[.].*', '', os.path.basename(table_bwa))
-mp_name = re.sub('[.].*', '', os.path.basename(table_minimap2))
+bwa_name = re.sub(r'[.].*', '', os.path.basename(table_bwa))
+mp_name = re.sub(r'[.].*', '', os.path.basename(table_minimap2))
 out_name = f'{bwa_name}--{mp_name}.tab'
 
-# Use context manager for file handling (good practice)
-with open(out_name, 'w') as write_out:
-    print(f'Samples found only in table1', file=write_out)
-    if not sample_bwa_table_only:
-        print(f'List is empty, All samples in table1 are in table2', file=write_out)
-    else:
-        for i in sample_bwa_table_only:
-            print(f'{i}', file=write_out)
-    print(f'----', file=write_out)
-
-    print(f'Samples found only in table2', file=write_out)
-    if not sample_mp_table_only:
-        print(f'List is empty, All samples in table2 are in table1', file=write_out)
-    else:
-        for i in sample_mp_table_only:
-            print(f'{i}', file=write_out)
-    print(f'----', file=write_out)
-
-    print(f'Positions found only in table1', file=write_out)
-    if not positions_bwa_table_only:
-        print(f'List is empty, All postions in table1 are in table2', file=write_out)
-    else:
-        for i in positions_bwa_table_only:
-            print(f'{i}', file=write_out)
-    print(f'----', file=write_out)
-
-    print(f'Positions found only in table2', file=write_out)
-    if not positions_mp_table_only:
-        print(f'List is empty, All postions in table2 are in table1', file=write_out)
-    else:
-        for i in positions_mp_table_only:
-            print(f'{i}', file=write_out)
-
-# Modern pandas approach with better error handling
+# Use context manager for file handling with explicit encoding
 try:
-    df = pd.read_csv(out_name, on_bad_lines='skip')
-    df.to_excel(f'{bwa_name}--{mp_name}.xlsx', index=False, engine='openpyxl')
+    with open(out_name, 'w', encoding='utf-8') as write_out:
+        print('Samples found only in table1', file=write_out)
+        if not sample_bwa_table_only:
+            print('List is empty, All samples in table1 are in table2', file=write_out)
+        else:
+            for sample in sample_bwa_table_only:
+                print(sample, file=write_out)
+        print('----', file=write_out)
+
+        print('Samples found only in table2', file=write_out)
+        if not sample_mp_table_only:
+            print('List is empty, All samples in table2 are in table1', file=write_out)
+        else:
+            for sample in sample_mp_table_only:
+                print(sample, file=write_out)
+        print('----', file=write_out)
+
+        print('Positions found only in table1', file=write_out)
+        if not positions_bwa_table_only:
+            print('List is empty, All positions in table1 are in table2', file=write_out)
+        else:
+            for position in positions_bwa_table_only:
+                print(position, file=write_out)
+        print('----', file=write_out)
+
+        print('Positions found only in table2', file=write_out)
+        if not positions_mp_table_only:
+            print('List is empty, All positions in table2 are in table1', file=write_out)
+        else:
+            for position in positions_mp_table_only:
+                print(position, file=write_out)
+
+except IOError as e:
+    print(f"Error writing output file {out_name}: {e}", file=sys.stderr)
+    sys.exit(1)
+
+# Convert tab file to Excel with better error handling
+try:
+    # Read the tab file we just created with proper delimiter
+    df = pd.read_csv(out_name, sep='\t', header=None, names=['Content'], encoding='utf-8')
+    excel_filename = f'{bwa_name}--{mp_name}.xlsx'
+    df.to_excel(excel_filename, index=False, engine='openpyxl')
+    print(f"Output files created: {out_name} and {excel_filename}")
 except Exception as e:
-    print(f"Error converting tab file to Excel: {e}")
+    print(f"Error converting tab file to Excel: {e}", file=sys.stderr)
+    print(f"Tab file {out_name} was created successfully, but Excel conversion failed.")
 
 # Created 2022 by Tod Stuber

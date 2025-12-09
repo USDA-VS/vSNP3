@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.31"
+__version__ = "3.32"
 
 import os
 import subprocess
@@ -56,7 +56,7 @@ class Tree:
                                 raxml = "raxmlHPC"
                             except OSError:
                                 raxml = 'raxmlHPC'
-            # print(f'set RAxML to {raxml}')
+            # print('set RAxML to {}'.format(raxml))
         self.raxml = raxml
         self.cpu_count = int(multiprocessing.cpu_count() / 1.2)
         # self.hash_names = hash_names
@@ -73,26 +73,27 @@ class Tree:
         self.write_path = write_path
         self.tree_name = tree_name
 
-        raxml_version = subprocess.check_output(f'{raxml} -v', shell=True, text=True)
+        raxml_version = subprocess.check_output('{} -v'.format(raxml), shell=True, text=True)
         self.raxml_version = raxml_version.split('\n')[2]
 
-        os.system(f'{raxml} -s {fasta_alignments} -n raxml -m GTRCATI -o root -w {write_path} -p 456123 -T 4 > /dev/null 2>&1') #> /dev/null 2>&1
-        # os.system(f'{raxml} -s {fasta_alignments} -n raxml -m ASC_GTRGAMMA --asc-corr lewis  -o root -w {write_path} -p 456123 -T 4 > /dev/null 2>&1') #> /dev/null 2>&1
+        os.system('{} -s {} -n raxml -m GTRCATI -o root -w {} -p 456123 -T 4 > /dev/null 2>&1'.format(raxml, fasta_alignments, write_path)) #> /dev/null 2>&1
+        # os.system('{} -s {} -n raxml -m ASC_GTRGAMMA --asc-corr lewis  -o root -w {} -p 456123 -T 4 > /dev/null 2>&1'.format(raxml, fasta_alignments, write_path)) #> /dev/null 2>&1
         try:
-            newick = f'{write_path}/{tree_name}_{self.st}.tre'
-            os.rename(f'{write_path}/RAxML_bestTree.raxml', newick)
-            raxml_to_remove = glob.glob(f'{write_path}/RAxML*')
+            newick = os.path.join(write_path, '{}_{}.tre'.format(tree_name, self.st))
+            os.rename(os.path.join(write_path, 'RAxML_bestTree.raxml'), newick)
+            raxml_to_remove = glob.glob(os.path.join(write_path, 'RAxML*'))
             for each in raxml_to_remove:
                 os.remove(each)
             try:
-                reduced_file = glob.glob(f'{write_path}/*.reduced')
+                reduced_file = glob.glob(os.path.join(write_path, '*.reduced'))
                 os.remove(reduced_file[0])
             except (FileNotFoundError, IndexError) as e:
                 pass
         except FileNotFoundError:
-            with open(f'{write_path}/SEE_RAXML_INFO', 'w') as message_out:
-                print(f'check sample numbers', file=message_out)
+            with open(os.path.join(write_path, 'SEE_RAXML_INFO'), 'w') as message_out:
+                print('check sample numbers', file=message_out)
         self.newick = newick
+    
     def checksum_match_to_text(self, tree):
         # read entire tree into variable as string obj
         with open(tree, 'rt') as open_tree:
@@ -122,7 +123,7 @@ class Tree:
             for index, row in df.iterrows():
                 test_duplicates.append(row.name)
                 if test_duplicates.count(row.name) < 2:
-                    print(f'>{row.name}', file=write_out)
+                    print('>{}'.format(row.name), file=write_out)
                     for pos in row:
                         print(pos, end='', file=write_out)
                     print("", file=write_out)
@@ -134,7 +135,7 @@ class Tree:
         except KeyError:
             print('Check that there is a "reference_seq" nameed')
             sys.exit(0)
-        # print(f'in_df size: {in_df.shape}')
+        # print('in_df size: {}'.format(in_df.shape))
         parsimony = in_df.loc[:, (in_df != in_df.iloc[0]).any()]
         parsimony_positions = list(parsimony)
         parse_df = in_df[parsimony_positions]
@@ -174,11 +175,11 @@ class Tables:
 
     def build_tables(self, ):
         if self.df_alignments is None:
-            reformated = f'{self.write_path}/reformated.fasta'
+            reformated = os.path.join(self.write_path, 'reformated.fasta')
             with open(reformated, 'w') as reformat:
                 sequence = SeqIO.parse(self.fasta_alignments, "fasta")
                 for each in sequence:
-                    print(f'>{each.description}\n{each.seq}', file=reformat)
+                    print('>{}\n{}'.format(each.description, each.seq), file=reformat)
             fasta_df = pd.read_csv(reformated, header=None, sep='^')
             os.remove(reformated)
             seq = fasta_df.iloc[1::2].reset_index(drop=True)
@@ -229,9 +230,9 @@ class Tables:
         
         # DEBUG: Print available samples and requested samples
         if self.debug:
-            print(f"[{self.table_name}] Available samples in fasta_df:")
+            print("[{}] Available samples in fasta_df:".format(self.table_name))
             print(sorted(fasta_df.index.tolist()))
-            print(f"[{self.table_name}] Requested samples in sample_order:")
+            print("[{}] Requested samples in sample_order:".format(self.table_name))
             print(sorted(sample_order))
         
         # Filter sample_order to only include samples that exist in fasta_df
@@ -241,8 +242,8 @@ class Tables:
         # Check for missing samples
         missing_samples = set(sample_order) - available_samples
         if missing_samples:
-            print(f"Warning [{self.table_name}]: The following samples from the tree are not found in the FASTA data: {missing_samples}")
-            print(f"This may be due to Unicode character differences or name mismatches.")
+            print("Warning [{}]: The following samples from the tree are not found in the FASTA data: {}".format(self.table_name, missing_samples))
+            print("This may be due to Unicode character differences or name mismatches.")
             
             # Try to find close matches for missing samples
             for missing_sample in missing_samples:
@@ -254,11 +255,11 @@ class Tables:
                         possible_matches.append(available_sample)
                 
                 if possible_matches:
-                    print(f"  [{self.table_name}] Possible matches for '{missing_sample}': {possible_matches}")
+                    print("  [{}] Possible matches for '{}': {}".format(self.table_name, missing_sample, possible_matches))
                     # Use the first possible match
                     best_match = possible_matches[0]
                     filtered_sample_order.append(best_match)
-                    print(f"  [{self.table_name}] Using '{best_match}' as substitute for '{missing_sample}'")
+                    print("  [{}] Using '{}' as substitute for '{}'".format(self.table_name, best_match, missing_sample))
         
         # Remove duplicates while preserving order
         seen = set()
@@ -269,7 +270,7 @@ class Tables:
                 seen.add(sample)
         
         if self.debug:
-            print(f"[{self.table_name}] Final sample order: {final_sample_order}")
+            print("[{}] Final sample order: {}".format(self.table_name, final_sample_order))
         
         # Use the filtered sample order
         tree_order = fasta_df.loc[final_sample_order]
@@ -398,31 +399,31 @@ class Tables:
                 df_split = df.iloc[:, chunk_start:chunck_end]
                 if 'Grouping' not in df.columns and self.show_groups:
                     df_split.insert(0, 'Grouping', new_series)
-                df_split.to_json(f'{self.write_path}/df{count}.json', orient='split')
-                self.excel_formatter(f'{self.write_path}/df{count}.json', 
-                                f'{self.write_path}/{self.table_name}_{table_type}_table{count}-{self.st}.xlsx')
-                os.remove(f'{self.write_path}/df{count}.json')
+                df_split.to_json(os.path.join(self.write_path, 'df{}.json'.format(count)), orient='split')
+                self.excel_formatter(os.path.join(self.write_path, 'df{}.json'.format(count)), 
+                                os.path.join(self.write_path, '{}_{}table{}-{}.xlsx'.format(self.table_name, table_type + '_', count, self.st)))
+                os.remove(os.path.join(self.write_path, 'df{}.json'.format(count)))
                 chunk_start += max_size
                 column_count -= max_size
             count += 1
             df_split = df.iloc[:, chunk_start:]
             if 'Grouping' not in df.columns and self.show_groups:
                 df_split.insert(0, 'Grouping', new_series)
-            df_split.to_json(f'{self.write_path}/df{count}.json', orient='split')
-            self.excel_formatter(f'{self.write_path}/df{count}.json', 
-                            f'{self.write_path}/{self.table_name}_{table_type}_table{count}-{self.st}.xlsx')
-            os.remove(f'{self.write_path}/df{count}.json')
+            df_split.to_json(os.path.join(self.write_path, 'df{}.json'.format(count)), orient='split')
+            self.excel_formatter(os.path.join(self.write_path, 'df{}.json'.format(count)), 
+                            os.path.join(self.write_path, '{}_{}table{}-{}.xlsx'.format(self.table_name, table_type + '_', count, self.st)))
+            os.remove(os.path.join(self.write_path, 'df{}.json'.format(count)))
             self.multiple_excel_files = True
         else:
             if 'Grouping' not in df.columns and self.show_groups:
                 df.insert(0, 'Grouping', new_series)
-            df.to_json(f'{self.write_path}/df.json', orient='split')
-            self.excel_formatter(f'{self.write_path}/df.json', 
-                            f'{self.write_path}/{self.table_name}_{table_type}_table-{self.st}.xlsx')
-            os.remove(f'{self.write_path}/df.json')
+            df.to_json(os.path.join(self.write_path, 'df.json'), orient='split')
+            self.excel_formatter(os.path.join(self.write_path, 'df.json'), 
+                            os.path.join(self.write_path, '{}_{}_table-{}.xlsx'.format(self.table_name, table_type, self.st)))
+            os.remove(os.path.join(self.write_path, 'df.json'))
             self.multiple_excel_files = False
             if table_type == 'cascade1':
-                self.table_to_tree_path = f'{self.write_path}/{self.table_name}_{table_type}_table-{self.st}.xlsx'
+                self.table_to_tree_path = os.path.join(self.write_path, '{}_{}_table-{}.xlsx'.format(self.table_name, table_type, self.st))
 
     def excel_formatter(self, df_json, write_to, group=None):
         """Format Excel output with proper styling and conditional formatting."""
@@ -566,7 +567,7 @@ class Hash_Names:
         outfasta = open(hashed_fasta , 'at')
         for fasta_file in record_iterator:
             if fasta_file.description == "root":
-                print(f'>{fasta_file.description}\n{fasta_file.seq}', file=outfasta)
+                print('>{}\n{}'.format(fasta_file.description, fasta_file.seq), file=outfasta)
                 checksum_dict.update({fasta_file.description:fasta_file.description})
             else:
                 unique_number = ''.join(random.choice('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ') for i in range(16))
@@ -575,12 +576,12 @@ class Hash_Names:
                     checksum_dict.update({unique_number:fasta_file.description + "-DUPLICATE_HEADER_NAME-" + dup_header})
                 else:
                     checksum_dict.update({unique_number:fasta_file.description})
-                print (f'>{unique_number}\n{fasta_file.seq}', file=outfasta)
+                print ('>{}\n{}'.format(unique_number, fasta_file.seq), file=outfasta)
         outfasta.close()
 
         idtable = open("idtable.txt" , 'wt')
         for key, value in checksum_dict.items():
-            print(f'{key}\t{value}', file=idtable)
+            print('{}\t{}'.format(key, value), file=idtable)
         idtable.close()
         self.idtable = "idtable.txt"
         return hashed_fasta
@@ -612,7 +613,7 @@ class Parsimonious:
         with open('reformated.fasta', 'w') as reformat:
             sequence = SeqIO.parse(fasta_alignments, "fasta")
             for each in sequence:
-                print(f'>{each.description}\n{each.seq}', file=reformat)
+                print('>{}\n{}'.format(each.description, each.seq), file=reformat)
 
         fasta_df = pd.read_csv('reformated.fasta', header=None, sep='^')
         seq = fasta_df.iloc[1::2].reset_index(drop=True)
@@ -639,7 +640,7 @@ class Parsimonious:
         parsimonious_fasta = fasta_alignments.replace('.fasta', '_parsimonious.fasta')
         with open(parsimonious_fasta, 'w') as write_out:
             for index, row in out_df.iterrows():
-                print(f'>{row.name}', file=write_out)
+                print('>{}'.format(row.name), file=write_out)
                 for pos in row:
                     print(pos, end='', file=write_out)
                 print("", file=write_out)
@@ -666,9 +667,9 @@ if __name__ == '__main__':
     parser.add_argument('--show_groups', action='store_true', dest='show_groups', help='Show group names in SNP table')
     parser.add_argument('-n', '--hash_names', action='store_true', dest='hash_names', help='Hash FASTA names to rid of any RAxML illegal characters')
     parser.add_argument('-d', '--debug', action='store_true', dest='debug', help='Optional: Keep debugging files and run without pooling')
-    parser.add_argument('-v', '--version', action='version', version=f'{os.path.abspath(__file__)}: version {__version__}')
+    parser.add_argument('-v', '--version', action='version', version='{}: version {}'.format(os.path.abspath(__file__), __version__))
     args = parser.parse_args()
-    print(f'\n{os.path.basename(__file__)} SET ARGUMENTS:')
+    print('\n{} SET ARGUMENTS:'.format(os.path.basename(__file__)))
     print(args)
 
     initial_fasta = args.fasta

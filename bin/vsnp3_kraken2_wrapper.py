@@ -9,13 +9,15 @@ import textwrap
 import numpy as np
 import pandas as pd
 import multiprocessing
+import subprocess
+from pathlib import Path
 
 # Python 3.12 compatibility - move set_start_method inside if __name__ block
 # to avoid issues with multiprocessing spawning
 
 from krona_lca_all import force_tax_number
 
-__version__ = "3.31"
+__version__ = "3.32"
 
 class Kraken2_Identification:
     ''' 
@@ -38,112 +40,223 @@ class Kraken2_Identification:
         FASTQ_list = [self.FASTQ_R1, self.FASTQ_R2]
         FASTQ_list = [x for x in FASTQ_list if x is not None]  # remove None when single read
         db_contents = kwargs.get('db_contents', False)
+        
         if db_contents:
-            with open(f'{self.db}/README', 'r') as opened_file:
-                for line in opened_file:
-                    print(f'{line.strip()}')
-            print(f'\nDatabase location: {self.db}\n')
+            readme_path = Path(self.db) / 'README'
+            try:
+                with open(readme_path, 'r') as opened_file:
+                    for line in opened_file:
+                        print(line.strip())
+                print(f'\nDatabase location: {self.db}\n')
+            except FileNotFoundError:
+                print(f'Warning: README file not found at {readme_path}')
+            except Exception as e:
+                print(f'Error reading README file: {e}')
+                
         if self.FASTA and self.FASTQ_R1:
-            print(f'### Error: Can only provide FASTA or FASTQ, not both file types at the same time')
-            sys.exit(0)
+            print('### Error: Can only provide FASTA or FASTQ, not both file types at the same time')
+            sys.exit(1)
+            
         if self.FASTA:
-            self.sample_name = re.sub('[._].*', '', self.FASTA)
+            self.sample_name = re.sub(r'[._].*', '', Path(self.FASTA).name)
+        elif FASTQ_list:
+            self.sample_name = re.sub(r'[._].*', '', Path(FASTQ_list[0]).name)
         else:
-            self.sample_name = re.sub('[._].*', '', FASTQ_list[0])
+            print('### Error: No input files provided')
+            sys.exit(1)
+            
         self.cwd = os.getcwd()
         self.FASTQ_list = FASTQ_list
 
+    def _run_command(self, cmd_args, description="Command"):
+        """Safely run a command using subprocess instead of os.system"""
+        try:
+            print(f'{description} running...')
+            result = subprocess.run(cmd_args, check=True, capture_output=True, text=True)
+            if result.stdout:
+                print(result.stdout)
+            return True
+        except subprocess.CalledProcessError as e:
+            print(f'Error running {description}: {e}')
+            if e.stderr:
+                print(f'Error details: {e.stderr}')
+            return False
+        except Exception as e:
+            print(f'Unexpected error running {description}: {e}')
+            return False
         
     def kraken2_run(self):
         db = self.db
-        threads = self.threads
+        threads = str(self.threads)
         sample_name = self.sample_name
         FASTQ_list = self.FASTQ_list
         FASTA = self.FASTA
         cwd = self.cwd
-        print(f'Kraken2 Running...')
-        if len(FASTQ_list) == 2:
-            os.system(f'kraken2 --db {db} --threads {threads} --paired {FASTQ_list[0]} {FASTQ_list[1]} --output {sample_name}-outputkraken.txt --report {sample_name}-reportkraken.txt')
-        elif len(FASTQ_list) == 1:
-            os.system(f'kraken2 --db {db} --threads {threads} {FASTQ_list[0]} --output {sample_name}-outputkraken.txt --report {sample_name}-reportkraken.txt')
-        elif FASTA:
-            os.system(f'kraken2 --db {db} --threads {threads} {FASTA} --output {sample_name}-outputkraken.txt --report {sample_name}-reportkraken.txt')
-        else:
-            print(f'\n### Error: Missing read files\n')
-            sys.exit(0)
-
-        if os.path.exists(f'{cwd}/{sample_name}-outputkraken.txt'):
-            output = f'{cwd}/{sample_name}-outputkraken.txt'
-        else:
-            print(f'\n### Error: Kraken report did not complete')
-            sys.exit(0)
         
-        if os.path.exists(f'{cwd}/{sample_name}-reportkraken.txt'):
-            report = f'{cwd}/{sample_name}-reportkraken.txt'
+        output_file = f'{sample_name}-outputkraken.txt'
+        report_file = f'{sample_name}-reportkraken.txt'
+        
+        print('Kraken2 Running...')
+        
+        # Build command safely
+        cmd_args = ['kraken2', '--db', db, '--threads', threads]
+        
+        if len(FASTQ_list) == 2:
+            cmd_args.extend(['--paired', FASTQ_list[0], FASTQ_list[1]])
+        elif len(FASTQ_list) == 1:
+            cmd_args.append(FASTQ_list[0])
+        elif FASTA:
+            cmd_args.append(FASTA)
         else:
-            print(f'\n### Error: Kraken report did not complete')
-            sys.exit(0)
+            print('\n### Error: Missing read files\n')
+            sys.exit(1)
+            
+        cmd_args.extend(['--output', output_file, '--report', report_file])
+        
+        # Run kraken2 command safely
+        if not self._run_command(cmd_args, "Kraken2"):
+            print('\n### Error: Kraken2 command failed')
+            sys.exit(1)
+
+        # Check output files exist
+        output_path = Path(cwd) / output_file
+        report_path = Path(cwd) / report_file
+        
+        if not output_path.exists():
+            print('\n### Error: Kraken output file was not created')
+            sys.exit(1)
+            
+        if not report_path.exists():
+            print('\n### Error: Kraken report file was not created')
+            sys.exit(1)
+
+        output = str(output_path)
+        report = str(report_path)
 
         if self.directory:
-            os.makedirs(self.directory, exist_ok=True)  # Using exist_ok for Python 3.12 compatibility
-            shutil.move(report, self.directory)
-            shutil.move(output, self.directory)
-            report = f'{cwd}/{self.directory}/{sample_name}-reportkraken.txt'
-            output = f'{cwd}/{self.directory}/{sample_name}-outputkraken.txt'
-            log_file = open("kraken_log.txt", "a")
             try:
-                log_file.write(f'DB used: {os.readlink(self.db)}')
-            except OSError:
-                log_file.write(f'DB used: {self.db}')
-            log_file.close()
-            shutil.move("kraken_log.txt", self.directory)
-            return report, output
-        else:
-            return report, output
+                os.makedirs(self.directory, exist_ok=True)
+                
+                dest_report = Path(self.directory) / report_file
+                dest_output = Path(self.directory) / output_file
+                
+                shutil.move(str(report_path), str(dest_report))
+                shutil.move(str(output_path), str(dest_output))
+                
+                report = str(dest_report)
+                output = str(dest_output)
+                
+                # Create log file
+                log_content = f'DB used: '
+                try:
+                    log_content += os.readlink(self.db)
+                except OSError:
+                    log_content += self.db
+                    
+                log_path = Path(self.directory) / "kraken_log.txt"
+                try:
+                    with open(log_path, "a") as log_file:
+                        log_file.write(log_content + '\n')
+                except Exception as e:
+                    print(f'Warning: Could not write log file: {e}')
+                    
+            except Exception as e:
+                print(f'Error organizing output files: {e}')
+                sys.exit(1)
+
+        return report, output
 
     def krona_make_graph(self, report, output):
-        # Output will be: kronaInput.txt
-        # Two column file will contain read header and taxid
-        force_tax_number(output)
-        os.system(f'ktImportTaxonomy kronaInput.txt')
-        os.rename(f'taxonomy.krona.html', f'{self.sample_name}-taxonomy.krona.html')
+        """Create Krona HTML visualization"""
         try:
-            shutil.rmtree(f'taxonomy.krona.html.files')
-        except FileNotFoundError:
-            pass
-        os.remove(f'kronaInput.txt')
-        if os.path.exists(f'{self.cwd}/{self.sample_name}-taxonomy.krona.html'):
-            krona_html = f'{self.cwd}/{self.sample_name}-taxonomy.krona.html'
-        else:
-            print(f'\n### Error: Krona HTML did not complete')
-            sys.exit(0)
+            # Output will be: kronaInput.txt
+            # Two column file will contain read header and taxid
+            force_tax_number(output)
+            
+            # Run ktImportTaxonomy safely
+            cmd_args = ['ktImportTaxonomy', 'kronaInput.txt']
+            if not self._run_command(cmd_args, "ktImportTaxonomy"):
+                print('\n### Error: ktImportTaxonomy command failed')
+                sys.exit(1)
+                
+            # Rename output file
+            original_html = 'taxonomy.krona.html'
+            new_html = f'{self.sample_name}-taxonomy.krona.html'
+            
+            if Path(original_html).exists():
+                os.rename(original_html, new_html)
+            else:
+                print('\n### Error: Krona HTML was not created')
+                sys.exit(1)
+                
+            # Clean up files
+            files_dir = Path(f'{original_html}.files')
+            if files_dir.exists():
+                shutil.rmtree(str(files_dir))
+                
+            krona_input = Path('kronaInput.txt')
+            if krona_input.exists():
+                os.remove(str(krona_input))
 
-        if self.directory:
-            shutil.move(krona_html, self.directory)
-            krona_html = f'{self.cwd}/{self.directory}/{self.sample_name}-taxonomy.krona.html'
+            krona_html_path = Path(self.cwd) / new_html
+            if not krona_html_path.exists():
+                print('\n### Error: Krona HTML file not found after processing')
+                sys.exit(1)
+                
+            krona_html = str(krona_html_path)
+
+            if self.directory:
+                dest_html = Path(self.directory) / new_html
+                shutil.move(krona_html, str(dest_html))
+                krona_html = str(dest_html)
+                
             return krona_html
-        else:
-            return krona_html
+            
+        except Exception as e:
+            print(f'Error creating Krona graph: {e}')
+            sys.exit(1)
 
     def bracken(self, report, output):
-        os.system(f'bracken -d {self.db} -i {report} -o {self.sample_name}-bracken.txt -r 250')
-        
-        # Updated pandas usage for better compatibility
-        df = pd.read_csv(f'{self.sample_name}-bracken.txt', sep='\t')
-        
-        # Use pandas' ExcelWriter with engine specification for compatibility
-        with pd.ExcelWriter(f'{self.sample_name}-bracken.xlsx', engine='openpyxl') as writer:
-            df.to_excel(writer, index=False)
+        """Run Bracken analysis"""
+        try:
+            bracken_output = f'{self.sample_name}-bracken.txt'
+            bracken_excel = f'{self.sample_name}-bracken.xlsx'
             
-        os.remove(f'{self.sample_name}-bracken.txt')
-        self.bracken_excel = f'{os.getcwd()}/{self.sample_name}-bracken.xlsx'
-        if self.directory:
-            shutil.move(f'{self.sample_name}-bracken.xlsx', self.directory)
-            self.bracken_excel = f'{os.getcwd()}/{self.directory}/{self.sample_name}-bracken.xlsx'
+            # Run bracken safely
+            cmd_args = ['bracken', '-d', self.db, '-i', report, '-o', bracken_output, '-r', '250']
+            if not self._run_command(cmd_args, "Bracken"):
+                print('\n### Error: Bracken command failed')
+                return
+                
+            # Process with pandas
+            if Path(bracken_output).exists():
+                df = pd.read_csv(bracken_output, sep='\t')
+                
+                # Use pandas' ExcelWriter with engine specification for compatibility
+                with pd.ExcelWriter(bracken_excel, engine='openpyxl') as writer:
+                    df.to_excel(writer, index=False)
+                    
+                os.remove(bracken_output)
+                
+                self.bracken_excel = str(Path(os.getcwd()) / bracken_excel)
+                
+                if self.directory:
+                    dest_excel = Path(self.directory) / bracken_excel
+                    shutil.move(bracken_excel, str(dest_excel))
+                    self.bracken_excel = str(dest_excel)
+            else:
+                print('Warning: Bracken output file not found')
+                
+        except Exception as e:
+            print(f'Error running Bracken analysis: {e}')
 
 if __name__ == "__main__": # execute if directly access by the interpreter
     # Set multiprocessing start method here for Python 3.12 compatibility
-    multiprocessing.set_start_method('spawn', True)
+    try:
+        multiprocessing.set_start_method('spawn', True)
+    except RuntimeError:
+        # Method already set, continue
+        pass
 
     parser = argparse.ArgumentParser(prog='PROG', formatter_class=argparse.RawDescriptionHelpFormatter, description=textwrap.dedent('''\
 
@@ -162,15 +275,28 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     parser.add_argument('-d', '--directory', action='store', dest='directory', required=False, default="kraken2", help='Put output to directory')
     parser.add_argument('-c', '--db_contents', action='store_true', dest='db_contents', help='Show contents of DB by printing README')
     parser.add_argument('--database', required=True, action='store', dest='database', help='Absolute path to database directory')
-    args = parser.parse_args()
+    
+    try:
+        args = parser.parse_args()
+    except SystemExit:
+        sys.exit(1)
 
     print(f'\n{os.path.basename(__file__)} SET ARGUMENTS:')
     print(args)
 
-    kraken2 = Kraken2_Identification(FASTA=args.FASTA, FASTQ_R1=args.FASTQ_R1, FASTQ_R2=args.FASTQ_R2, directory=args.directory, db_contents=args.db_contents, database=args.database)
-    report, output = kraken2.kraken2_run()
-    krona_html = kraken2.krona_make_graph(report, output)
-    # kraken2.bracken(report, output)
+    try:
+        kraken2 = Kraken2_Identification(FASTA=args.FASTA, FASTQ_R1=args.FASTQ_R1, FASTQ_R2=args.FASTQ_R2, directory=args.directory, db_contents=args.db_contents, database=args.database)
+        report, output = kraken2.kraken2_run()
+        krona_html = kraken2.krona_make_graph(report, output)
+        # kraken2.bracken(report, output)
+        
+        print('done')
+        
+    except KeyboardInterrupt:
+        print('\nOperation cancelled by user')
+        sys.exit(1)
+    except Exception as e:
+        print(f'Unexpected error: {e}')
+        sys.exit(1)
 
-    print('done')
 # Created March 2020 by Tod Stuber

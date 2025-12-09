@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.31"
+__version__ = "3.32"
 
 import os
 import io
@@ -19,7 +19,7 @@ class GroupReporter:
             reference_options = Ref_Options(reference_type)
             self.vcf = vcf
         else:
-            print(f'VCF file and reference option must be provided')
+            print('VCF file and reference option must be provided')
             sys.exit(0)
                 
         excel_path = reference_options.defining_snps
@@ -101,25 +101,27 @@ class GroupReporter:
                 for index, record in df.iterrows():
                     try:
                         record_qual = int(record.QUAL)
-                    except TypeError:
+                    except (TypeError, ValueError):
                         record_qual = 0 
                     chrom = record.CHROM
                     position = record.POS
-                    absolute_positon = str(chrom) + ":" + str(position)
+                    absolute_position = f"{chrom}:{position}"
                     try:
-                        if str(record.ALT[0]) != "None" and record.AC == AC and len(record.REF) == 1 and record_qual > qual_threshold and record.MQ > MQ:
-                            found_positions[absolute_positon] = record.REF
-                        if str(record.ALT[0]) != "None" and record.AC == 1 and len(record.REF) == 1 and record_qual > qual_threshold and record.MQ > MQ:
-                            found_positions_mix[absolute_positon] = record.REF
-                    except KeyError:
+                        # Safely access ALT column with proper checks
+                        alt_value = record.ALT
+                        if pd.notna(alt_value) and str(alt_value) != "None" and alt_value != "." and record.AC == AC and len(str(record.REF)) == 1 and record_qual > qual_threshold and record.MQ > MQ:
+                            found_positions[absolute_position] = record.REF
+                        if pd.notna(alt_value) and str(alt_value) != "None" and alt_value != "." and record.AC == 1 and len(str(record.REF)) == 1 and record_qual > qual_threshold and record.MQ > MQ:
+                            found_positions_mix[absolute_position] = record.REF
+                    except (KeyError, AttributeError, TypeError):
                         pass
                 return filename, found_positions, found_positions_mix
             except (ZeroDivisionError, ValueError, UnboundLocalError, TypeError) as e:
-                return filename, f'see error', {}, {}
+                return filename, 'see error', {}, {}
         except (SyntaxError, AttributeError) as e:
             # print(type(e)(str(e) + f'\n### VCF SyntaxError {filename} File Removed'))
             os.remove(filename)
-            return filename, f'see error', {}, {}
+            return filename, 'see error', {}, {}
     
     def bin_and_html_table(self, filename, found_positions, found_positions_mix):
         sample_groups_list = []
@@ -218,7 +220,7 @@ class GroupReporter:
                 sample_groups_list = sorted(list(set(sample_groups_list)))  # Remove duplicates and sort
 
         except TypeError:
-            message = f'File TypeError'
+            message = 'File TypeError'
             print(f'{message}: {filename}')
             sample_groups_list = [f'{message}: {filename}']
             

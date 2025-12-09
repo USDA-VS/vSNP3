@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.31"
+__version__ = "3.32"
 
 import os
 import sys
@@ -195,18 +195,25 @@ class HTML_Summary():
         if args.metadata:
             print(f"<h4>Metadata:  {args.metadata}<br>", file=htmlfile)
         else:
-            print(f"No metadata for describing samples in trees and tables<br>", file=htmlfile)
+            print("No metadata for describing samples in trees and tables<br>", file=htmlfile)
         if args.defining_snps:
-            print(f"Defining SNPs:  {args.defining_snps}<br>", file=htmlfile)
+            print(f"<h4>Defining SNPs:  {args.defining_snps}<br>", file=htmlfile)
         else:
-            print(f"No defining SNPs files for grouping and filtering<br>", file=htmlfile)
+            print("No defining SNPs files for grouping and filtering<br>", file=htmlfile)
         if args.gbk:
             for each in args.gbk:
                 print(f"gbk:  {each}<br>", file=htmlfile)
         else:
-            print(f"No gbk for annotation<br>", file=htmlfile)
+            print("No gbk for annotation<br>", file=htmlfile)
 
-        print(f"SNP calling thresholds:  REF: QUAL <u><{args.n_threshold}</u>, N: QUAL <u>{args.n_threshold}-{args.qual_threshold}</u>, ALT: QUAL <u>>{args.qual_threshold}</u>, Ambigious: <u>AC=1</u>, MQ: <u>>{args.mq_threshold}</u></h4>", file=htmlfile)
+        print(f"SNP calling thresholds:  REF: QUAL <u>&lt;{args.n_threshold}</u>, N: QUAL <u>{args.n_threshold}-{args.qual_threshold}</u>, ALT: QUAL <u>&gt;{args.qual_threshold}</u>, Ambigious: <u>AC=1</u>, MQ: <u>&gt;{args.mq_threshold}</u></h4>", file=htmlfile)
+
+        # Add density filtering information to HTML summary
+        if args.density_threshold is not None or args.density_window is not None:
+            # Set defaults if not provided
+            threshold = args.density_threshold if args.density_threshold is not None else 3
+            window = args.density_window if args.density_window is not None else 20
+            print(f"<h4>Density filtering enabled: SNPs removed when &gt;={threshold} SNPs found within {window} bp window</h4>", file=htmlfile)
 
         print(f"<h4>{vcf_to_df.vcf_original_count} VCF files initial count<br>", file=htmlfile)
         print(f"{len(vcf_to_df.dataframes)} VCF files in this run<br>", file=htmlfile)
@@ -399,7 +406,7 @@ class HTML_Summary():
             if conda_env:
                 print(f'<b>Versions from conda environment: {conda_env}</b> <br>', file=htmlfile)
             else:
-                print(f'<b>Versions from system installation</b> <br>', file=htmlfile)
+                print('<b>Versions from system installation</b> <br>', file=htmlfile)
             
             for program in program_list:
                 version = "nd"  # Default to "nd" (no data)
@@ -559,9 +566,25 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     parser.add_argument('--show_groups', action='store_true', dest='show_groups', help='Show group names in SNP table')
     parser.add_argument('-html_tree', '--html_tree', action='store_true', dest='html_tree', help='Optional: Generate HTML tree visualization (automatically enables -dp)')
     parser.add_argument('-dp', '--dp', action='store_true', dest='dp', help='Optional: Include average depth of coverage in tables')
+    parser.add_argument('--density_threshold', nargs='?', const=3, type=int, dest='density_threshold', help='Optional: Minimum number of SNPs required to trigger density filtering (default: 3)')
+    parser.add_argument('--density_window', nargs='?', const=20, type=int, dest='density_window', help='Optional: Window size in base pairs for density filtering (default: 20)')
     parser.add_argument('-d', '--debug', action='store_true', dest='debug', help='Optional: Keep debugging files and run without pooling.  A pickle file will be kept for troubleshooting to be used directly in vsnp3_group_on_defining_snps.py.  This saves processing time')
     parser.add_argument('-v', '--version', action='version', version=f'{os.path.basename(__file__)}: version {__version__}')
     args = parser.parse_args()
+
+    # Handle density filtering parameter defaults
+    # If only one parameter is provided, set the other to its default
+    if args.density_threshold is not None and args.density_window is None:
+        args.density_window = 20
+        print(f"Density filtering enabled with threshold={args.density_threshold}, using default window={args.density_window}")
+    elif args.density_window is not None and args.density_threshold is None:
+        args.density_threshold = 3
+        print(f"Density filtering enabled with window={args.density_window}, using default threshold={args.density_threshold}")
+    elif args.density_threshold is not None and args.density_window is not None:
+        print(f"Density filtering enabled with custom threshold={args.density_threshold}, window={args.density_window}")
+
+    # Determine if density filtering should be enabled
+    filter_density = args.density_threshold is not None or args.density_window is not None
 
     setup = Setup(debug=args.debug)
     global_date_stamp = setup.date_stamp
@@ -575,7 +598,8 @@ if __name__ == "__main__": # execute if directly access by the interpreter
         #get VCFs from a directory
         wd = os.path.expanduser(args.wd)
         wd = os.path.abspath(wd)
-        vcf_list = glob.glob(f'{wd}/*vcf')
+        vcf_pattern = os.path.join(wd, '*vcf')
+        vcf_list = glob.glob(vcf_pattern)
         wd_vcf_list = vcf_list
 
     def zipit(src, dst):
@@ -600,12 +624,12 @@ if __name__ == "__main__": # execute if directly access by the interpreter
         os.makedirs(output_dir, exist_ok=True)
         for each_vcf in vcf_list:
             shutil.copy(each_vcf, output_dir)
-            wd_vcf_list.append(f'{output_dir}/{os.path.basename(each_vcf)}')
+            wd_vcf_list.append(os.path.join(output_dir, os.path.basename(each_vcf)))
         os.chdir(output_dir)
         setup.cwd = os.getcwd()
         global_working_dir = setup.cwd
 
-    starting_files = f'{setup.cwd}/vcf_starting_files'
+    starting_files = os.path.join(setup.cwd, 'vcf_starting_files')
     os.makedirs(starting_files, exist_ok=True)
     for each_vcf in wd_vcf_list:
         shutil.copy(each_vcf, starting_files)
@@ -628,7 +652,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
             # if file was previously removed such as it was empty
             pass
 
-    print(f'\nvcf_bad_list')
+    print('\nvcf_bad_list')
     for each in vcf_to_df.vcf_bad_list:
         print(f'\t {each}')
 
@@ -689,7 +713,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     if args.html_tree:
         args.dp = True
 
-    group = Group(cwd=global_working_dir, metadata=args.metadata, defining_snps=args.defining_snps, excel_remove=args.remove_by_name, gbk_list=args.gbk, dataframes=vcf_to_df.dataframes, all_vcf=args.all_vcf, find_new_filters=args.find_new_filters, no_filters=args.no_filters, qual_threshold=int(args.qual_threshold), n_threshold=int(args.n_threshold), mq_threshold=int(args.mq_threshold), abs_pos=args.abs_pos, group=args.group, show_groups=args.show_groups, hash_groups=args.hash_groups, html_tree=args.html_tree, dp=args.dp, debug=args.debug)
+    group = Group(cwd=global_working_dir, metadata=args.metadata, defining_snps=args.defining_snps, excel_remove=args.remove_by_name, gbk_list=args.gbk, dataframes=vcf_to_df.dataframes, all_vcf=args.all_vcf, find_new_filters=args.find_new_filters, no_filters=args.no_filters, qual_threshold=int(args.qual_threshold), n_threshold=int(args.n_threshold), mq_threshold=int(args.mq_threshold), abs_pos=args.abs_pos, group=args.group, show_groups=args.show_groups, hash_groups=args.hash_groups, html_tree=args.html_tree, dp=args.dp, filter_density=filter_density, density_threshold=args.density_threshold, density_window=args.density_window, debug=args.debug)
     vcf_to_df.vcf_bad_list = vcf_to_df.vcf_bad_list + group.vcf_bad_list
 
     setup.print_time()

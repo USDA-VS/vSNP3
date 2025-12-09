@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-__version__ = "3.31"
+__version__ = "3.32"
 
 import os
 import sys
@@ -189,15 +189,19 @@ class Assemble(Setup):
         self.total_contig_lengths = total_contig_lengths
         self.mean_coverage = mean_coverage
 
-        print(f'\t     Contig count: {bcolors.YELLOW}{self.contig_count:,}{bcolors.ENDC}, \n \
-            Contig length counts <|301-999bp|>: {bcolors.RED}{self.small_contigs_count:,}{bcolors.ENDC}|{bcolors.BLUE}{self.mid_size:,}{bcolors.ENDC}|{bcolors.GREEN}{self.greater_one_kb_count:,}{bcolors.ENDC}, \n \
-            Longest contig: {bcolors.GREEN}{self.longest_contig:,}{bcolors.ENDC}, \n \
-            Total length: {bcolors.WHITE}{self.total_contig_lengths:,}{bcolors.ENDC}, \n \
-            N50: {bcolors.PURPLE}{self.n50:,}{bcolors.ENDC}, \n \
-            {self.coverage_title}: {bcolors.YELLOW}{self.mean_coverage:,.1f}X{bcolors.ENDC}\n')
+        # Fixed multi-line f-string using parentheses for string concatenation
+        print(f'\t     Contig count: {bcolors.YELLOW}{self.contig_count:,}{bcolors.ENDC}, \n'
+              f'            Contig length counts <|301-999bp|>: {bcolors.RED}{self.small_contigs_count:,}{bcolors.ENDC}|{bcolors.BLUE}{self.mid_size:,}{bcolors.ENDC}|{bcolors.GREEN}{self.greater_one_kb_count:,}{bcolors.ENDC}, \n'
+              f'            Longest contig: {bcolors.GREEN}{self.longest_contig:,}{bcolors.ENDC}, \n'
+              f'            Total length: {bcolors.WHITE}{self.total_contig_lengths:,}{bcolors.ENDC}, \n'
+              f'            N50: {bcolors.PURPLE}{self.n50:,}{bcolors.ENDC}, \n'
+              f'            {self.coverage_title}: {bcolors.YELLOW}{self.mean_coverage:,.1f}X{bcolors.ENDC}\n')
     
     def latex(self, tex, groups=None):
         blast_banner = Banner("Assembly")
+        # Define LaTeX newline constant to avoid raw string in f-string
+        latex_newline = r"\\"
+        
         print(r'\begin{table}[ht!]', file=tex)
         print(r'\begin{adjustbox}{width=1\textwidth}', file=tex)
         print(r'\begin{center}', file=tex)
@@ -206,9 +210,11 @@ class Assemble(Setup):
         print(r'\end{adjustbox}', file=tex)
         print(r'\begin{adjustbox}{width=1\textwidth}', file=tex)
         print(r'\begin{tabular}{ l | l | l | l | l | l }', file=tex)
-        print(f'Contig count & Contig length counts $<$ | 301-999bp | $>$ & Longest contig & Total length & N50 & {self.coverage_title} {r"\\"}', file=tex)
+        # Fixed raw string in f-string by defining constant
+        print(f'Contig count & Contig length counts $<$ | 301-999bp | $>$ & Longest contig & Total length & N50 & {self.coverage_title} {latex_newline}', file=tex)
         print(r'\hline', file=tex)
-        print(f'{self.contig_count:,} & {self.small_contigs_count:,} | {self.mid_size:,} | {self.greater_one_kb_count:,} & {self.longest_contig:,} & {self.total_contig_lengths:,} & {self.n50:,} & {self.mean_coverage:,.1f}X {r"\\"}', file=tex)
+        # Fixed raw string in f-string by using constant
+        print(f'{self.contig_count:,} & {self.small_contigs_count:,} | {self.mid_size:,} | {self.greater_one_kb_count:,} & {self.longest_contig:,} & {self.total_contig_lengths:,} & {self.n50:,} & {self.mean_coverage:,.1f}X {latex_newline}', file=tex)
         print(r'\hline', file=tex)
         print(r'\end{adjustbox}', file=tex)
         print(r'\vspace{0.1 mm}', file=tex)

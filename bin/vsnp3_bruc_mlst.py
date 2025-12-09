@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.31"
+__version__ = "3.32"
 
 import os
 import io
@@ -11,7 +11,7 @@ import pandas as pd
 from collections import OrderedDict
 import argparse
 import textwrap
-import subprocess  # Added subprocess for more secure command execution
+import subprocess
 
 
 class Bruc_MLST:
@@ -40,19 +40,22 @@ class Bruc_MLST:
             output_file (str): Path to output filtered VCF file
             quality_threshold (float): Minimum quality score to retain variant
         """
-        with open(input_file, 'r') as infile, open(output_file, 'w') as outfile:
-            for line in infile:
-                if line.startswith('#'):
-                    outfile.write(line)
-                else:
-                    fields = line.strip().split('\t')
-                    if len(fields) >= 6:
-                        try:
-                            qual = float(fields[5])
-                            if qual > quality_threshold:
-                                outfile.write(line)
-                        except ValueError:
-                            continue
+        try:
+            with open(input_file, 'r') as infile, open(output_file, 'w') as outfile:
+                for line in infile:
+                    if line.startswith('#'):
+                        outfile.write(line)
+                    else:
+                        fields = line.strip().split('\t')
+                        if len(fields) >= 6:
+                            try:
+                                qual = float(fields[5])
+                                if qual > quality_threshold:
+                                    outfile.write(line)
+                            except (ValueError, IndexError):
+                                continue
+        except IOError as e:
+            print("Error processing VCF file {}: {}".format(input_file, e))
 
     def read_vcf(self, path):
         """
@@ -64,30 +67,34 @@ class Bruc_MLST:
         Returns:
             pandas.DataFrame: DataFrame containing VCF data
         """
-        with open(path, 'r') as f:
-            lines = [l for l in f if not l.startswith('##')]
-        
-        df = pd.read_csv(
-            io.StringIO(''.join(lines)),
-            dtype={'#CHROM': str, 'POS': str, 'ID': str, 'REF': str, 'ALT': str,
-                'QUAL': str, 'FILTER': str, 'INFO': str},
-            sep='\t'
-        ).rename(columns={'#CHROM': 'CHROM'})
-        
-        # Convert numeric columns
-        df['POS'] = pd.to_numeric(df['POS'], errors='coerce').fillna(0).astype(int)
-        df['QUAL'] = pd.to_numeric(df['QUAL'], errors='coerce').fillna(0).astype(int)
-        
-        # Split the INFO column and extract the AC, DP and MQ fields
-        df['AC'] = df['INFO'].apply(lambda x: dict(item.split("=") for item in x.split(";") if "=" in item).get('AC', None))
-        df['DP'] = df['INFO'].apply(lambda x: dict(item.split("=") for item in x.split(";") if "=" in item).get('DP', None))
-        df['MQ'] = df['INFO'].apply(lambda x: dict(item.split("=") for item in x.split(";") if "=" in item).get('MQ', None))
-        df['AC'] = pd.to_numeric(df['AC'], errors='coerce').fillna(0).astype(int)
-        df['DP'] = pd.to_numeric(df['DP'], errors='coerce').fillna(0).astype(int)
-        df['MQ'] = pd.to_numeric(df['MQ'], errors='coerce').fillna(0).astype(int)
-        df = df.drop(columns=['INFO', 'ID', 'FILTER', 'FORMAT'])
+        try:
+            with open(path, 'r') as f:
+                lines = [l for l in f if not l.startswith('##')]
+            
+            df = pd.read_csv(
+                io.StringIO(''.join(lines)),
+                dtype={'#CHROM': str, 'POS': str, 'ID': str, 'REF': str, 'ALT': str,
+                    'QUAL': str, 'FILTER': str, 'INFO': str},
+                sep='\t'
+            ).rename(columns={'#CHROM': 'CHROM'})
+            
+            # Convert numeric columns
+            df['POS'] = pd.to_numeric(df['POS'], errors='coerce').fillna(0).astype(int)
+            df['QUAL'] = pd.to_numeric(df['QUAL'], errors='coerce').fillna(0).astype(int)
+            
+            # Split the INFO column and extract the AC, DP and MQ fields
+            df['AC'] = df['INFO'].apply(lambda x: dict(item.split("=") for item in x.split(";") if "=" in item).get('AC', None))
+            df['DP'] = df['INFO'].apply(lambda x: dict(item.split("=") for item in x.split(";") if "=" in item).get('DP', None))
+            df['MQ'] = df['INFO'].apply(lambda x: dict(item.split("=") for item in x.split(";") if "=" in item).get('MQ', None))
+            df['AC'] = pd.to_numeric(df['AC'], errors='coerce').fillna(0).astype(int)
+            df['DP'] = pd.to_numeric(df['DP'], errors='coerce').fillna(0).astype(int)
+            df['MQ'] = pd.to_numeric(df['MQ'], errors='coerce').fillna(0).astype(int)
+            df = df.drop(columns=['INFO', 'ID', 'FILTER', 'FORMAT'])
 
-        return df
+            return df
+        except Exception as e:
+            print("Error reading VCF file {}: {}".format(path, e))
+            return pd.DataFrame()
 
     def run_command(self, command):
         """
@@ -102,12 +109,12 @@ class Bruc_MLST:
         try:
             result = subprocess.run(command, shell=True, capture_output=True, text=True, check=False)
             if result.returncode != 0:
-                print(f"Warning: Command '{command}' returned non-zero exit status {result.returncode}")
+                print("Warning: Command '{}' returned non-zero exit status {}".format(command, result.returncode))
                 if result.stderr:
-                    print(f"Error: {result.stderr.strip()}")
+                    print("Error: {}".format(result.stderr.strip()))
             return result.stdout
         except Exception as e:
-            print(f"Error executing command '{command}': {e}")
+            print("Error executing command '{}': {}".format(command, e))
             return ""
 
     def find_mlst(self):
@@ -120,45 +127,51 @@ class Bruc_MLST:
         ref = re.sub('.fasta', '', os.path.basename(mlst_reference))
         
         # Index reference sequence
-        self.run_command(f"samtools faidx {mlst_reference} 2> /dev/null")
-        self.run_command(f"picard CreateSequenceDictionary REFERENCE={mlst_reference} OUTPUT={ref}.dict 2> /dev/null")
-        self.run_command(f"bwa index {mlst_reference} 2> /dev/null")
+        self.run_command("samtools faidx {} 2> /dev/null".format(mlst_reference))
+        self.run_command("picard CreateSequenceDictionary REFERENCE={} OUTPUT={}.dict 2> /dev/null".format(mlst_reference, ref))
+        self.run_command("bwa index {} 2> /dev/null".format(mlst_reference))
         
         samfile_mlst = sample_name + ".sam"
-        print(f'### {sample_name} BWA Aligning reads for Brucella MLST...')
+        print('### {} BWA Aligning reads for Brucella MLST...'.format(sample_name))
         
         # Align reads to reference
         if self.paired:
-            self.run_command(f'bwa mem -M -R "@RG\\tID:{sample_name}\\tSM:{sample_name}\\tPL:ILLUMINA\\tPI:250" -t 8 {mlst_reference} {fastq_list[0]} {fastq_list[1]} > {samfile_mlst}')
+            cmd = 'bwa mem -M -R "@RG\\tID:{}\\tSM:{}\\tPL:ILLUMINA\\tPI:250" -t 8 {} {} {} > {}'.format(
+                sample_name, sample_name, mlst_reference, fastq_list[0], fastq_list[1], samfile_mlst)
         else:
-            self.run_command(f'bwa mem -M -R "@RG\\tID:{sample_name}\\tSM:{sample_name}\\tPL:ILLUMINA\\tPI:250" -t 8 {mlst_reference} {fastq_list[0]} > {samfile_mlst}')
+            cmd = 'bwa mem -M -R "@RG\\tID:{}\\tSM:{}\\tPL:ILLUMINA\\tPI:250" -t 8 {} {} > {}'.format(
+                sample_name, sample_name, mlst_reference, fastq_list[0], samfile_mlst)
+        self.run_command(cmd)
         
-        print(f'{sample_name} finding MLST type...')
+        print('{} finding MLST type...'.format(sample_name))
         all_bam_mlst = sample_name + "_all.bam"
-        self.run_command(f"picard AddOrReplaceReadGroups INPUT={samfile_mlst} OUTPUT={all_bam_mlst} RGLB=lib1 RGPU=unit1 RGSM={sample_name} RGPL=illumina 2> /dev/null")
+        self.run_command("picard AddOrReplaceReadGroups INPUT={} OUTPUT={} RGLB=lib1 RGPU=unit1 RGSM={} RGPL=illumina 2> /dev/null".format(samfile_mlst, all_bam_mlst, sample_name))
         
         # Process BAM file
         mapbam = sample_name + "_mapped.bam"
-        self.run_command(f"samtools view -h -F4 -b -T {mlst_reference} {all_bam_mlst} -o {mapbam} 2> /dev/null")
+        self.run_command("samtools view -h -F4 -b -T {} {} -o {} 2> /dev/null".format(mlst_reference, all_bam_mlst, mapbam))
         
         sortedbam = sample_name + "_sorted.bam"
-        self.run_command(f"samtools sort {mapbam} -o {sortedbam} 2> /dev/null")
-        self.run_command(f"samtools index {sortedbam} 2> /dev/null")
+        self.run_command("samtools sort {} -o {} 2> /dev/null".format(mapbam, sortedbam))
+        self.run_command("samtools index {} 2> /dev/null".format(sortedbam))
         
         # Call variants
         unfiltered_vcf_mlst = sample_name + "_unfiltered_mlst" + ".vcf"
         mapq_fix = sample_name + "_mapq_fix_mlst.vcf"
         vcf_mlst = sample_name + ".vcf"
         
-        self.run_command(f"freebayes -E -1 -f {mlst_reference} {sortedbam} > {unfiltered_vcf_mlst}")
+        self.run_command("freebayes -E -1 -f {} {} > {}".format(mlst_reference, sortedbam, unfiltered_vcf_mlst))
         
         # "fix" MQ notation in VCF to match GATK output
-        with open(mapq_fix, 'w') as write_fix:
-            with open(unfiltered_vcf_mlst, 'r') as unfiltered:
-                for line in unfiltered:
-                    line = line.strip()
-                    new_line = re.sub(r';MQM=', r';MQ=', line)
-                    print(new_line, file=write_fix)
+        try:
+            with open(mapq_fix, 'w') as write_fix:
+                with open(unfiltered_vcf_mlst, 'r') as unfiltered:
+                    for line in unfiltered:
+                        line = line.strip()
+                        new_line = re.sub(r';MQM=', r';MQ=', line)
+                        print(new_line, file=write_fix)
+        except IOError as e:
+            print("Error processing VCF files: {}".format(e))
         
         # Remove clearly poor positions
         self.filter_vcf(mapq_fix, vcf_mlst, quality_threshold=20)
@@ -215,19 +228,23 @@ class Bruc_MLST:
             "CCCCCGGGCCGACCCGAGCGAAGCGGGGAGGCCACGGCGCGTAAGTGGCCAAGCACCTGTTCCGCGGGGTA": "MLST type 26",
             "CCCCCGGGCCGACCCGAGCGAAGCGGGGAGACCACGGCGCATAAGTGGCCAGGCACCTGTCCCGCGGGGTA": "MLST type 27",
             "CCCTCGGGCCGACCTGAGCGAAGCGGGGAGACCACGGCGCATAAGTGGCCAGGCTCCTGTCCCGCGGGGTA": "MLST type 28" }
+        
         # Clean up temporary files
         try:
-            # Use pathlib for more modern file operations in Python 3.12
+            # Use glob for more efficient file operations
             remove_files = glob.glob('ST1-MLST*')
             for i in remove_files:
-                os.remove(i)
+                if os.path.exists(i):
+                    os.remove(i)
             remove_files = glob.glob('*-mlst*')
             for i in remove_files:
-                os.remove(i)
+                if os.path.exists(i):
+                    os.remove(i)
             remove_files = glob.glob('*_mlst.vcf.idx')
             for i in remove_files:
-                os.remove(i)
-            if os.path.exists(unfiltered_vcf_mlst):  # Check before removing
+                if os.path.exists(i):
+                    os.remove(i)
+            if os.path.exists(unfiltered_vcf_mlst):
                 os.remove(unfiltered_vcf_mlst)
 
             # Use context manager for file operations
@@ -253,14 +270,15 @@ class Bruc_MLST:
                 shutil.move("mlst.txt", "mlst")
             
             # Clean up with existence checks
-            for file_to_remove in [samfile_mlst, all_bam_mlst, mapbam, sortedbam, f'{sortedbam}.bai', mapq_fix]:
+            bai_file = sortedbam + ".bai"
+            for file_to_remove in [samfile_mlst, all_bam_mlst, mapbam, sortedbam, bai_file, mapq_fix]:
                 if os.path.exists(file_to_remove):
                     os.remove(file_to_remove)
                     
             return self.mlst_type
             
         except Exception as e:
-            print(f"Error during cleanup: {e}")
+            print("Error during cleanup: {}".format(e))
             self.mlst_type = "Error determining MLST type"
             return self.mlst_type
 
@@ -277,7 +295,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     
     parser.add_argument('-r1', '--read1', action='store', dest='read1', required=True, help='Required: single read')
     parser.add_argument('-r2', '--read2', action='store', dest='read2', required=False, default=None, help='Optional: paired read')
-    parser.add_argument('-v', '--version', action='version', version=f'{os.path.abspath(__file__)}: version {__version__}')
+    parser.add_argument('-v', '--version', action='version', version='{}: version {}'.format(os.path.abspath(__file__), __version__))
 
     args = parser.parse_args()
     read1 = args.read1

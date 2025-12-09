@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.31"
+__version__ = "3.32"
 
 import os
 import re
@@ -19,22 +19,72 @@ class VCF_Annotation():
 
         annotation = Annotation(gbk_list=gbk_list)
         
-        with open('v_header.csv', 'w+') as header_out:
-            with open(vcf_file) as fff:
-                for line in fff:
-                    if re.search('^#', line):
-                        print(line.strip(), file=header_out)
+        # Extract header from VCF file
+        try:
+            with open('v_header.csv', 'w+') as header_out:
+                with open(vcf_file) as fff:
+                    for line in fff:
+                        if re.search('^#', line):
+                            print(line.strip(), file=header_out)
+        except IOError as e:
+            raise IOError(f"Error processing VCF file {vcf_file}: {e}")
 
-        vcf_df = pd.read_csv(vcf_file, sep='\t', header=None, 
-                             names=["CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", 
-                                   "INFO", "FORMAT", "Sample"], 
-                             comment='#')
+        # Read VCF data
+        try:
+            vcf_df = pd.read_csv(vcf_file, sep='\t', header=None, 
+                                 names=["CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", 
+                                       "INFO", "FORMAT", "Sample"], 
+                                 comment='#')
+        except Exception as e:
+            raise Exception(f"Error reading VCF file: {e}")
+            
         vcf_df['ABS_POS'] = vcf_df['CHROM'].astype(str) + ':' + vcf_df['POS'].astype(str)
-        annotation_dict={}
-        for index, row in vcf_df.iterrows():
-            annotation.run(row['ABS_POS'], row['ALT'])
-            annotation_dict[row['ABS_POS']] = f'cds_nt_start={annotation.cds_nt_start};cds_nt_end={annotation.cds_nt_end};gene={annotation.gene};product={annotation.product};aa_residue_pos={annotation.aa_residue_pos};snp_nt={annotation.snp_nt};aa_pos={annotation.aa_pos};reference base code={annotation.reference_base_code};snp_base_code={annotation.snp_base_code};ref_aa={annotation.ref_aa};snp_aa={annotation.snp_aa};mutation_type={annotation.mutation_type}'
         
+        # Build annotation dictionary
+        annotation_dict = {}
+        for index, row in vcf_df.iterrows():
+            try:
+                annotation.run(row['ABS_POS'], row['ALT'])
+                
+                # Build annotation string in parts to avoid f-string complexity
+                annotation_parts = [
+                    f'cds_nt_start={getattr(annotation, "cds_nt_start", "")}',
+                    f'cds_nt_end={getattr(annotation, "cds_nt_end", "")}',
+                    f'gene={getattr(annotation, "gene", "")}',
+                    f'product={getattr(annotation, "product", "")}',
+                    f'aa_residue_pos={getattr(annotation, "aa_residue_pos", "")}',
+                    f'snp_nt={getattr(annotation, "snp_nt", "")}',
+                    f'aa_pos={getattr(annotation, "aa_pos", "")}',
+                    f'reference base code={getattr(annotation, "reference_base_code", "")}',
+                    f'snp_base_code={getattr(annotation, "snp_base_code", "")}',
+                    f'ref_aa={getattr(annotation, "ref_aa", "")}',
+                    f'snp_aa={getattr(annotation, "snp_aa", "")}',
+                    f'mutation_type={getattr(annotation, "mutation_type", "")}'
+                ]
+                
+                annotation_string = ';'.join(annotation_parts)
+                annotation_dict[row['ABS_POS']] = annotation_string
+                
+            except Exception as e:
+                print(f"Warning: Error annotating position {row['ABS_POS']}: {e}")
+                # Create empty annotation for failed positions
+                empty_parts = [
+                    'cds_nt_start=',
+                    'cds_nt_end=',
+                    'gene=',
+                    'product=',
+                    'aa_residue_pos=',
+                    'snp_nt=',
+                    'aa_pos=',
+                    'reference base code=',
+                    'snp_base_code=',
+                    'ref_aa=',
+                    'snp_aa=',
+                    'mutation_type='
+                ]
+                annotation_dict[row['ABS_POS']] = ';'.join(empty_parts)
+        
+        # Merge annotations with VCF data
         vcf_df = vcf_df.set_index('ABS_POS')
         vcf_df.drop(['ID'], axis=1, inplace=True)
         annotation_df = pd.DataFrame.from_dict(annotation_dict, orient='index', columns=["ID"])
@@ -42,19 +92,36 @@ class VCF_Annotation():
 
         vcf_df = vcf_df.merge(annotation_df, how='left', left_index=True, right_index=True)
         vcf_df = vcf_df[["CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT", "Sample"]]
-        vcf_df.to_csv('v_annotated_body.csv', sep='\t', header=False, index=False)
         
+        # Write annotated body
+        try:
+            vcf_df.to_csv('v_annotated_body.csv', sep='\t', header=False, index=False)
+        except Exception as e:
+            raise Exception(f"Error writing annotated body: {e}")
+        
+        # Combine header and body files
         cat_files = ['v_header.csv', 'v_annotated_body.csv']
         name = vcf_file.replace('.vcf', '')
+        output_filename = f'{name}_annotated.vcf'
         
-        with open(f'{name}_annotated.vcf', "wb") as outfile:
-            for cf in cat_files:
-                with open(cf, "rb") as infile:
-                    outfile.write(infile.read())
+        try:
+            with open(output_filename, "wb") as outfile:
+                for cf in cat_files:
+                    with open(cf, "rb") as infile:
+                        outfile.write(infile.read())
+        except IOError as e:
+            raise IOError(f"Error combining files: {e}")
                     
-        os.remove('v_header.csv')
-        os.remove('v_annotated_body.csv')
-        self.vcf = f'{os.getcwd()}/{name}_annotated.vcf'
+        # Clean up temporary files
+        try:
+            for temp_file in ['v_header.csv', 'v_annotated_body.csv']:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+        except OSError as e:
+            print(f"Warning: Could not remove temporary file: {e}")
+            
+        self.vcf = os.path.join(os.getcwd(), output_filename)
+
 
 if __name__ == "__main__": # execute if directly access by the interpreter
     parser = argparse.ArgumentParser(prog='PROG', formatter_class=argparse.RawDescriptionHelpFormatter, description=textwrap.dedent('''\
@@ -78,6 +145,11 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     print(args)
     print("\n")
 
-    vcf_annotation = VCF_Annotation(gbk_list=args.gbk_list, vcf_file=args.vcf)
+    try:
+        vcf_annotation = VCF_Annotation(gbk_list=args.gbk_list, vcf_file=args.vcf)
+        print(f"Successfully created annotated VCF: {vcf_annotation.vcf}")
+    except Exception as e:
+        print(f"Error: {e}")
+        exit(1)
 
 # Created 2021 by Tod Stuber

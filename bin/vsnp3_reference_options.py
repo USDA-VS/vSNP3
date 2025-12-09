@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.31"
+__version__ = "3.32"
 
 import os
 import sys
@@ -36,19 +36,30 @@ class Ref_Options():
         self.gbk = None
         self.remove = None
         self.fasta = None
-        self.select_ref = select_ref
+        self.path = None
+        
         all_ref_options = []
         script_path = os.path.dirname(os.path.realpath(__file__))
         self.script_path = script_path
         #don't use just the script path dependencies, but gather external dependency paths too
         ref_options_file = os.path.abspath(f'{script_path}/../dependencies/reference_options_paths.txt')
         self.ref_options_file = ref_options_file
-        with open(f'{ref_options_file}', 'r') as dep_paths:
-            dependency_paths = [line.strip() for line in dep_paths]
+        
+        try:
+            with open(ref_options_file, 'r') as dep_paths:
+                dependency_paths = [line.strip() for line in dep_paths]
+        except FileNotFoundError:
+            print(f"Warning: Reference options file not found: {ref_options_file}")
+            dependency_paths = []
+        except IOError as e:
+            print(f"Error reading reference options file: {e}")
+            dependency_paths = []
+            
         #the additional dependency paths point to more reference options
         for path in dependency_paths:
-            ref_options = glob.glob(f'{path}/*')
-            all_ref_options = all_ref_options + ref_options
+            if os.path.exists(path):
+                ref_options = glob.glob(f'{path}/*')
+                all_ref_options = all_ref_options + ref_options
         all_ref_options = [x for x in all_ref_options if os.path.isdir(x)] #only capture directories
         self.all_ref_options = all_ref_options
 
@@ -56,79 +67,95 @@ class Ref_Options():
             print("Directory is a path on the file system")
             self.metadata_gather(select_ref)
         else:
-            #if select_ref is a directory name then use files in it
+            # First try to find reference by directory name
+            found_by_name = False
             for directory in all_ref_options: 
                 if select_ref == directory.split('/')[-1]: #find reference by directory name
                     #if the asked for reference is a match grab files
                     self.path = directory
                     self.metadata_gather(directory)
-                    continue
-                else: # this portion should probably be removed.  It can cause confusion as to why a reference is found and being used.
-                    reference_header_capture = defaultdict(list) # find reference by fasta headers
-                    # for directory in all_ref_options:
-                    for each_fasta in glob.glob(f'{directory}/*fasta'):
-                        with open(each_fasta, 'r') as each_fasta:
-                            for each_line in each_fasta:
-                                if each_line.startswith(">"):
-                                    reference_header_capture[directory].append(each_line.strip())
-                    for directory, header in reference_header_capture.items():
-                        if select_ref in " ".join(header):
-                            self.select_ref = select_ref
-                            self.path = directory
-                            self.metadata_gather(directory)
+                    found_by_name = True
+                    break
+            
+            # If not found by name, try to find by fasta headers
+            if not found_by_name:
+                reference_header_capture = defaultdict(list) # find reference by fasta headers
+                for directory in all_ref_options:
+                    try:
+                        for each_fasta in glob.glob(f'{directory}/*fasta'):
+                            with open(each_fasta, 'r') as fasta_file:
+                                for each_line in fasta_file:
+                                    if each_line.startswith(">"):
+                                        reference_header_capture[directory].append(each_line.strip())
+                    except IOError as e:
+                        print(f"Warning: Could not read fasta file in {directory}: {e}")
+                        continue
+                
+                for directory, header in reference_header_capture.items():
+                    if select_ref in " ".join(header):
+                        self.select_ref = select_ref
+                        self.path = directory
+                        self.metadata_gather(directory)
+                        break
 
     def metadata_gather(self, directory):
         defining_snps = glob.glob(f'{directory}/*xlsx')
-        defining_snps = [efile for efile in defining_snps if not re.search('~\$*', efile)] #ignore opened files
+        defining_snps = [efile for efile in defining_snps if not re.search(r'~\$.*', efile)] #ignore opened files
         # there are 3 excel files.  only 1 excel file for variable "excel".  it must be the non-*meta* and non-*remove* file
-        defining_snps = [efile for efile in defining_snps if not re.search('.*remove.*', efile)] # just incase it is still in directory, remove it so only one excel is found below
-        defining_snps = [efile for efile in defining_snps if not re.search('.*meta.*', efile)]
+        defining_snps = [efile for efile in defining_snps if not re.search(r'.*remove.*', efile)] # just incase it is still in directory, remove it so only one excel is found below
+        defining_snps = [efile for efile in defining_snps if not re.search(r'.*meta.*', efile)]
         #check that multiple files are not found for a single variable.  Each variable must point to just one file.
         if len(defining_snps) > 1:
-            print(f'\n\n##### Exiting script {self.__eq__select_ref} contains more than one an Excel at {directory}\n')
+            print(f'\n\n##### Exiting script: {self.select_ref} contains more than one Excel file at {directory}\n')
             sys.exit(0)
         else:
             try:
                 self.defining_snps = defining_snps[0]
             except IndexError:
                 self.defining_snps = None
+                
         # remove from analysis
         remove = glob.glob(f'{directory}/*remove*xlsx')
-        remove = [efile for efile in remove if not re.search('~\$*', efile)] #ignore opened files
+        remove = [efile for efile in remove if not re.search(r'~\$.*', efile)] #ignore opened files
         if len(remove) > 1:
-            print(f'\n\n##### Exiting script {self.select_ref} contains more than one remove file at {directory}\n')
+            print(f'\n\n##### Exiting script: {self.select_ref} contains more than one remove file at {directory}\n')
             sys.exit(0)
         else:
             try:
                 self.remove = remove[0]
             except IndexError:
-                self.remove =  None
+                self.remove = None
+                
         #metadata
         metadata = glob.glob(f'{directory}/*meta*xlsx')
-        metadata = [efile for efile in metadata if not re.search('~\$*', efile)] #ignore opened files
+        metadata = [efile for efile in metadata if not re.search(r'~\$.*', efile)] #ignore opened files
         if len(metadata) > 1:
-            print(f'\n\n##### Exiting script {self.select_ref} contains more than one metadata file at {directory}\n')
+            print(f'\n\n##### Exiting script: {self.select_ref} contains more than one metadata file at {directory}\n')
             sys.exit(0)
         else:
             try:
                 self.metadata = metadata[0]
             except IndexError:
-                self.metadata =  None
+                self.metadata = None
+                
         self.fasta = glob.glob(f'{directory}/*fasta')
         self.gbk = glob.glob(f'{directory}/*gbk')
 
     def files_in_directory(self):
-        all_files = glob.glob(f'{self.path}/*')
-        for each_file in all_files:
-            print(f'{each_file}')
-        print("")
+        if hasattr(self, 'path') and self.path:
+            all_files = glob.glob(f'{self.path}/*')
+            for each_file in all_files:
+                print(f'{each_file}')
+            print("")
+        else:
+            print("No path set for reference directory")
 
     def print_options(self):
-        each_reference_option=[]
+        each_reference_option = []
         print("\nReference option files available:")
-        print(f'Path are listed here: {self.ref_options_file}')
+        print(f'Paths are listed here: {self.ref_options_file}')
         for option in self.all_ref_options:
-            each_reference_option.append((f'\t{os.path.split(option)[-1]}'))
+            each_reference_option.append(f'\t{os.path.split(option)[-1]}')
         for each in sorted(each_reference_option):
             print(each)
         print("\nSee vsnp3_path_adder.py -h for more information\n")
@@ -149,4 +176,3 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     args = parser.parse_args()
     select_ref = args.select_ref
     ro = Ref_Options(select_ref)
-    

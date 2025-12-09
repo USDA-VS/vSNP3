@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.31"
+__version__ = "3.32"
 
 import os
 import re
@@ -26,7 +26,7 @@ class Expand_Range():
 
         file_sample_name = re.sub('[.].*', '', file)
         # date_stamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        expanded_file_name = f'{file_sample_name}_expanded.xlsx'
+        expanded_file_name = '{}_expanded.xlsx'.format(file_sample_name)
 
         df = pd.read_excel(file)
         # dictionary for incoming lists
@@ -41,13 +41,13 @@ class Expand_Range():
             expansion=[]
             group_name = values[0]
             reference = values[1].split(':')[0]
-            string_strip = f'{reference}:'
+            string_strip = '{}:'.format(reference)
             values = values[1:]
             values = [x for x in values if x is not None and not (isinstance(x, float) and math.isnan(x))]
             items_without_matching_prefix = [item for item in values if not item.startswith(string_strip)]
             if items_without_matching_prefix:
                 print("### Position entries have wrong reference prefix.\n### There may be mixed reference types.\n### Must check worksheet and remove additional references\n")
-                print(f'### The correct reference type appears to be: {reference}')
+                print('### The correct reference type appears to be: {}'.format(reference))
                 print('### Positions not matching:')
                 for item in items_without_matching_prefix:
                     print(item, end=', ')
@@ -63,7 +63,7 @@ class Expand_Range():
                     expansion.append(int(value))
             expansion = list(set(expansion))
             expansion.sort()
-            expansion = [f'{string_strip}{item}' for item in expansion]
+            expansion = ['{}{}'.format(string_strip, item) for item in expansion]
             # print(f"\ndefining snp '{column}', group {group_name}\n{expansion}")
             expansion.insert(0, group_name)
             if column == 'Unnamed: 0':
@@ -95,14 +95,14 @@ class Merge_Defining_SNPs():
                     if start == numbers[i-1]:
                         ranges.append(str(start))
                     else:
-                        ranges.append(f"{start}-{numbers[i-1]}")
+                        ranges.append("{}-{}".format(start, numbers[i-1]))
                     start = numbers[i]
 
             # Handle the last number or range
             if start == numbers[-1]:
                 ranges.append(str(start))
             else:
-                ranges.append(f"{start}-{numbers[-1]}")
+                ranges.append("{}-{}".format(start, numbers[-1]))
             ranges = sorted(ranges, key=lambda x: int(x.split('-')[0]))
             return ranges
 
@@ -155,7 +155,7 @@ class Merge_Defining_SNPs():
             values1 = column_dict1[each]
             group_name1 = values1[0]
             reference1 = values1[1].split(':')[0]
-            string_strip = f'{reference1}:'
+            string_strip = '{}:'.format(reference1)
             values1 = [x for x in values1 if x is not None and not (isinstance(x, float) and math.isnan(x))]
             values1 = [item.replace(string_strip, '') for item in values1]
             values1 = set(values1[1:])
@@ -169,8 +169,8 @@ class Merge_Defining_SNPs():
             in_list1_only = list(values1.difference(values2))
             if in_list1_only:
                 in_list1_only = numbers_to_ranges(in_list1_only)
-                in_list1_only = [f'{string_strip}{item}' for item in in_list1_only]
-                in_list1_only.insert(0, f'Only in {file_sample_name1}: {group_name1}')
+                in_list1_only = ['{}{}'.format(string_strip, item) for item in in_list1_only]
+                in_list1_only.insert(0, 'Only in {}: {}'.format(file_sample_name1, group_name1))
                 if each == 'Unnamed: 0':
                     in_list1_only.insert(0, '')
                 else:
@@ -180,8 +180,8 @@ class Merge_Defining_SNPs():
             in_list2_only = list(values2.difference(values1))
             if in_list2_only:
                 in_list2_only = numbers_to_ranges(in_list2_only)
-                in_list2_only = [f'{string_strip}{item}' for item in in_list2_only]
-                in_list2_only.insert(0, f'Only in {file_sample_name2}: {group_name2}')
+                in_list2_only = ['{}{}'.format(string_strip, item) for item in in_list2_only]
+                in_list2_only.insert(0, 'Only in {}: {}'.format(file_sample_name2, group_name2))
                 if each == 'Unnamed: 0':
                     in_list2_only.insert(0, '')
                 else:
@@ -191,8 +191,8 @@ class Merge_Defining_SNPs():
             combined_set = list(values1.union(values2))
             if combined_set:
                 combined_set = numbers_to_ranges(combined_set)
-                combined_set = [f'{string_strip}{item}' for item in combined_set]
-                combined_set.insert(0, f'{group_name1}')
+                combined_set = ['{}{}'.format(string_strip, item) for item in combined_set]
+                combined_set.insert(0, '{}'.format(group_name1))
                 if each == 'Unnamed: 0':
                     combined_set.insert(0, '')
                 else:
@@ -205,12 +205,32 @@ class Merge_Defining_SNPs():
         pos_only_in1=[]
         for each in defining_only_in1_not2:
             values1 = column_dict1[each]
+            # Get the reference from the first position entry to define string_strip
+            first_position_entry = None
+            for val in values1[1:]:  # Skip group name
+                if val is not None and not (isinstance(val, float) and math.isnan(val)):
+                    first_position_entry = val
+                    break
+            
+            if first_position_entry and ':' in first_position_entry:
+                reference1 = first_position_entry.split(':')[0]
+                string_strip = '{}:'.format(reference1)
+            else:
+                # Fallback - try to find reference from any valid entry
+                string_strip = ''
+                for val in values1[1:]:
+                    if val is not None and not (isinstance(val, float) and math.isnan(val)) and ':' in str(val):
+                        reference1 = str(val).split(':')[0]
+                        string_strip = '{}:'.format(reference1)
+                        break
+            
             values1 = [x for x in values1 if x is not None and not (isinstance(x, float) and math.isnan(x))]
-            values1 = [item.replace(string_strip, '') for item in values1]
+            if string_strip:
+                values1 = [item.replace(string_strip, '') for item in values1]
             group_name1 = values1[0]
             values1 = list(set(values1[1:]))
             values1 = numbers_to_ranges(values1)
-            values1 = [f'{string_strip}{item}' for item in values1]
+            values1 = ['{}{}'.format(string_strip, item) for item in values1]
             values1.insert(0, group_name1)
             if each == 'Unnamed: 0':
                 values1.insert(0, '')
@@ -218,18 +238,42 @@ class Merge_Defining_SNPs():
                 values1.insert(0, each)
             pos_only_in1.append(values1)
             auto_merge.append(values1)
+            
+        if pos_only_in1:  # Only create DataFrame if there's data
             df1 = pd.DataFrame(pos_only_in1).transpose()
             df1 = sort_df(df1)
+        else:
+            df1 = pd.DataFrame()  # Empty DataFrame
 
         pos_only_in2=[]
         for each in defining_only_in2_not1:
             values2 = column_dict2[each]
+            # Get the reference from the first position entry to define string_strip
+            first_position_entry = None
+            for val in values2[1:]:  # Skip group name
+                if val is not None and not (isinstance(val, float) and math.isnan(val)):
+                    first_position_entry = val
+                    break
+            
+            if first_position_entry and ':' in first_position_entry:
+                reference2 = first_position_entry.split(':')[0]
+                string_strip = '{}:'.format(reference2)
+            else:
+                # Fallback - try to find reference from any valid entry
+                string_strip = ''
+                for val in values2[1:]:
+                    if val is not None and not (isinstance(val, float) and math.isnan(val)) and ':' in str(val):
+                        reference2 = str(val).split(':')[0]
+                        string_strip = '{}:'.format(reference2)
+                        break
+            
             values2 = [x for x in values2 if x is not None and not (isinstance(x, float) and math.isnan(x))]
-            values2 = [item.replace(string_strip, '') for item in values2]
+            if string_strip:
+                values2 = [item.replace(string_strip, '') for item in values2]
             group_name2 = values2[0]
             values2 = list(set(values2[1:]))
             values2 = numbers_to_ranges(values2)
-            values2 = [f'{string_strip}{item}' for item in values2]
+            values2 = ['{}{}'.format(string_strip, item) for item in values2]
             values2.insert(0, group_name2)
             if each == 'Unnamed: 0':
                 values2.insert(0, '')
@@ -237,20 +281,24 @@ class Merge_Defining_SNPs():
                 values2.insert(0, each)
             pos_only_in2.append(values2)
             auto_merge.append(values2)
+            
+        if pos_only_in2:  # Only create DataFrame if there's data
             df2 = pd.DataFrame(pos_only_in2).transpose()
             df2 = sort_df(df2)
+        else:
+            df2 = pd.DataFrame()  # Empty DataFrame
 
-        merged_file_name = f'merge_differences_{file_sample_name1}_{file_sample_name2}_{date_stamp}.xlsx'
+        merged_file_name = 'merge_differences_{}_{_{}.xlsx'.format(file_sample_name1, file_sample_name2, date_stamp)
         with pd.ExcelWriter(merged_file_name) as diff_writer:
             # Write each DataFrame to a separate sheet with a specific name
             dfall.to_excel(diff_writer, sheet_name='Defin_SNP_in_both_but_diff_pos', index=False, header=False)
-            df1.to_excel(diff_writer, sheet_name=f'Defin_SNP_only_{file_sample_name1}'[:31], index=False, header=False)
-            df2.to_excel(diff_writer, sheet_name=f'Defin_SNP_only_{file_sample_name2}'[:31], index=False, header=False)
+            df1.to_excel(diff_writer, sheet_name='Defin_SNP_only_{}'.format(file_sample_name1)[:31], index=False, header=False)
+            df2.to_excel(diff_writer, sheet_name='Defin_SNP_only_{}'.format(file_sample_name2)[:31], index=False, header=False)
 
         dfauto = pd.DataFrame(auto_merge).transpose()
         dfauto = sort_df(dfauto)
 
-        merged_auto = f'merge_auto_{file_sample_name1}_{file_sample_name2}_{date_stamp}.xlsx'
+        merged_auto = 'merge_auto_{}_{_{}.xlsx'.format(file_sample_name1, file_sample_name2, date_stamp)
         with pd.ExcelWriter(merged_auto, engine='openpyxl') as write_auto:
             # Write an updated defining snps Excel file with all combined from both worksheets
             dfauto.to_excel(write_auto, sheet_name='Sheet1', index=False, header=False)
@@ -274,10 +322,10 @@ if __name__ == "__main__": # execute if directly access by the interpreter
 
     parser.add_argument('-f1', '--file1', action='store', dest='file1', required=False, help='merge 1 file')
     parser.add_argument('-f2', '--file2', action='store', dest='file2', required=False, default=None, help='merge 2 file')
-    parser.add_argument('-v', '--version', action='version', version=f'{os.path.basename(__file__)}: version {__version__}')
+    parser.add_argument('-v', '--version', action='version', version='{}: version {}'.format(os.path.basename(__file__), __version__))
     args = parser.parse_args()
     
-    print(f'\n{os.path.basename(__file__)} SET ARGUMENTS:')
+    print('\n{} SET ARGUMENTS:'.format(os.path.basename(__file__)))
     print(args)
     print("\n")
 
@@ -294,8 +342,8 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     try:
         os.remove(file1_expanded)
     except OSError as e:
-        print(f"Error occurred while deleting the file: {e}")
+        print("Error occurred while deleting the file: {}".format(e))
     try:
         os.remove(file2_expanded)
     except OSError as e:
-        print(f"Error occurred while deleting the file: {e}")
+        print("Error occurred while deleting the file: {}".format(e))

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.31"
+__version__ = "3.32"
 
 import os
 import gzip
@@ -115,6 +115,7 @@ class Spoligo(Setup):
         sbcode = None
         db_binarycode = None
         sample_binary = None
+        ave_length = 0  # Initialize ave_length with default value
 
         seq_string = ""
         count_summary = {}
@@ -130,9 +131,13 @@ class Spoligo(Setup):
                             count += 1
                             sequence_list.append(seq)
                             sum_length = sum_length + len(seq)
-                    ave_length = sum_length / count
-                    ave_length = int(ave_length)
-                    print(f'Spoligo calculated average read length: {ave_length}')
+                    if count > 0:  # Prevent division by zero
+                        ave_length = sum_length / count
+                        ave_length = int(ave_length)
+                        print(f'Spoligo calculated average read length: {ave_length}')
+                    else:
+                        print('Warning: No reads found in FASTQ file')
+                        ave_length = 0
         except TypeError:
             # TypeError if not paired
             pass
@@ -144,8 +149,8 @@ class Spoligo(Setup):
             sequence_list = list(filter(capture_spacer_sequence.match, sequence_list))
             seq_string = "".join(sequence_list)
         else:
-            # if <= 70 then search all reads, not just those with repeat regions.
-            print("Spoligo check: Average read length < 65. Looking at all reads for spacers. Will be very slow. Queue Jepordy theme song.")
+            # if <= 64 then search all reads, not just those with repeat regions.
+            print("Spoligo check: Average read length <= 64. Looking at all reads for spacers. Will be very slow. Queue Jeopardy theme song.")
             seq_string = "".join(sequence_list)
         self.seq_string = seq_string
         
@@ -154,10 +159,13 @@ class Spoligo(Setup):
         
         # Start a local dask cluster for computation
         # Only create the client inside the method to avoid issues
-        cluster = LocalCluster(n_workers=self.cpu_count_half, threads_per_worker=2)
-        client = Client(cluster)
+        cluster = None
+        client = None
         
         try:
+            cluster = LocalCluster(n_workers=self.cpu_count_half, threads_per_worker=2)
+            client = Client(cluster)
+            
             delayed_results = {}
             for spacer_id, spacer_sequence in self.spoligo_dictionary.items():
                 delayed_results[spacer_id] = delayed(self.finding_sp)(spacer_sequence)
@@ -166,10 +174,26 @@ class Spoligo(Setup):
             results = client.compute(delayed_results)
             count_summary = client.gather(results)
             
+        except Exception as e:
+            print(f"Warning: Dask parallel processing failed: {e}")
+            print("Falling back to sequential processing...")
+            # Fallback to sequential processing
+            count_summary = {}
+            for spacer_id, spacer_sequence in self.spoligo_dictionary.items():
+                count_summary[spacer_id] = self.finding_sp(spacer_sequence)
+            
         finally:
             # Always ensure client and cluster are closed
-            client.close()
-            cluster.close()
+            if client is not None:
+                try:
+                    client.close()
+                except:
+                    pass
+            if cluster is not None:
+                try:
+                    cluster.close()
+                except:
+                    pass
             
         count_summary = OrderedDict(sorted(count_summary.items()))
         spoligo_binary_dictionary = {}
@@ -187,14 +211,23 @@ class Spoligo(Setup):
         self.sample_binary = sample_binary
         self.octal = self.binary_to_octal(sample_binary)
         found = False
-        with open(self.spoligo_db) as spoligo_db_file:  # put into dictionary or list
-            for line in spoligo_db_file:
-                line = line.rstrip()
-                sbcode = line.split()[1]
-                db_binarycode = line.split()[2]
-                if sample_binary == db_binarycode:
-                    found = True
-                    self.sbcode = sbcode
+        try:
+            with open(self.spoligo_db) as spoligo_db_file:  # put into dictionary or list
+                for line in spoligo_db_file:
+                    line = line.rstrip()
+                    line_parts = line.split()
+                    if len(line_parts) >= 3:
+                        sbcode = line_parts[1]
+                        db_binarycode = line_parts[2]
+                        if sample_binary == db_binarycode:
+                            found = True
+                            self.sbcode = sbcode
+                            break
+        except FileNotFoundError:
+            print(f"Warning: Spoligotype database file not found: {self.spoligo_db}")
+            self.sbcode = "Database file not found"
+            found = True  # Set to True to avoid further processing
+            
         if not found:
             if sample_binary == '0000000000000000000000000000000000000000000':
                 self.sbcode = "spoligo not found, binary all zeros, see spoligo file"
@@ -218,21 +251,23 @@ class Spoligo(Setup):
         print(r'\multicolumn{3}{l}{Spacer Counts} \\', file=tex)
         print(r'\hline', file=tex)
         count_summary = ":".join(map(str, self.count_summary_list))
-        print(r'\multicolumn{3}{l}{' + f'{count_summary}' + r' } \\', file=tex)
+        print(r'\multicolumn{3}{l}{' + count_summary + r' } \\', file=tex)
         print(r'\hline', file=tex)
-        print(f'Binary Code, threshold greater than {str(self.call_cut_off)} spacer counts & Octal Code & SB Number {r"\\"}', file=tex)
+        # Fixed f-string with raw string issue
+        threshold_str = str(self.call_cut_off)
+        print(f'Binary Code, threshold greater than {threshold_str} spacer counts & Octal Code & SB Number \\\\', file=tex)
         print(r'\hline', file=tex)
-        print(f'{self.sample_binary} & {self.octal} & {self.sbcode} {r"\\"}', file=tex)
+        print(f'{self.sample_binary} & {self.octal} & {self.sbcode} \\\\', file=tex)
         print(r'\hline', file=tex)
         print(r'\end{tabular}', file=tex)
         print(r'\end{adjustbox}', file=tex)
         print(r'\end{table}', file=tex)
 
     def excel(self, excel_dict):
-        excel_dict['Spoligotype Spacer Counts'] = f'{":".join(map(str, self.count_summary_list))}'
+        excel_dict['Spoligotype Spacer Counts'] = ":".join(map(str, self.count_summary_list))
         excel_dict['Spoligotype Binary Code'] = f'binary-{self.sample_binary}'
         excel_dict['Spoligotype Octal Code'] = f'octal-{self.octal}'
-        excel_dict['Spoligotype SB Number'] = f'{self.sbcode}'
+        excel_dict['Spoligotype SB Number'] = self.sbcode
 
 
 if __name__ == "__main__":  # execute if directly access by the interpreter

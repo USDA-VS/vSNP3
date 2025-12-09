@@ -10,7 +10,7 @@ Usage:
     python excel_merger.py -i <input_dir> [options]
 """
 
-__version__ = "3.31"
+__version__ = "3.32"
 
 import os
 import sys
@@ -61,7 +61,7 @@ class ExcelMerger:
         if not files:
             raise FileNotFoundError(
                 f"No Excel files found matching pattern '{self.file_pattern}' "
-                f"in directory '{self.input_dir}'"
+                f"in directory '{str(self.input_dir)}'"
             )
         return files
 
@@ -78,7 +78,7 @@ class ExcelMerger:
         try:
             return pd.read_excel(file_path, index_col=self.index_col)
         except Exception as e:
-            self.logger.error(f"Error reading file {file_path}: {str(e)}")
+            self.logger.error(f"Error reading file {str(file_path)}: {str(e)}")
             raise
 
     def merge_files(self) -> pd.DataFrame:
@@ -99,10 +99,10 @@ class ExcelMerger:
                 column_orders.append(list(df.columns))
                 all_columns.update(df.columns)
                 df_list.append(df)
-                self.logger.info(f"Successfully read {file_path}")
+                self.logger.info(f"Successfully read {str(file_path)}")
             except Exception as e:
                 self.logger.error(
-                    f"Skipping {file_path} due to error: {str(e)}")
+                    f"Skipping {str(file_path)} due to error: {str(e)}")
                 continue
 
         if not df_list:
@@ -154,7 +154,7 @@ class ExcelMerger:
         try:
             df.to_excel(output_file)
             self.logger.info(
-                f"Successfully saved merged file to {output_file}")
+                f"Successfully saved merged file to {str(output_file)}")
             return output_file
         except Exception as e:
             self.logger.error(f"Error saving merged file: {str(e)}")
@@ -229,7 +229,7 @@ def main():
 
         output_file = merger.run()
         print(
-            f"Successfully merged Excel files. Output saved to: {output_file}")
+            f"Successfully merged Excel files. Output saved to: {str(output_file)}")
         sys.exit(0)
 
     except Exception as e:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-__version__ = "3.31"
+__version__ = "3.32"
 
 import os
 import subprocess
@@ -41,7 +41,7 @@ class Best_Reference(Setup):
         sourmash search *_R1*.fastq.gz.sig ../sourmash/ref_db.sbt.zip -o sourmash_findings.csv
         '''
         all_ref_options = []
-        ref_options_file = os.path.abspath(f'{self.script_path}/../dependencies/reference_options_paths.txt')
+        ref_options_file = os.path.abspath(os.path.join(self.script_path, '..', 'dependencies', 'reference_options_paths.txt'))
         self.ref_options_file = ref_options_file
         
         # Check if reference options file exists
@@ -56,13 +56,13 @@ class Best_Reference(Setup):
             return
             
         # Read reference paths
-        with open(f'{ref_options_file}', 'r') as dep_paths:
+        with open(ref_options_file, 'r') as dep_paths:
             dependency_paths = [line.strip() for line in dep_paths]
             
         # Collect all reference options from the specified paths
         for path in dependency_paths:
             if os.path.exists(path):
-                ref_options = glob.glob(f'{path}/*')
+                ref_options = glob.glob(os.path.join(path, '*'))
                 all_ref_options = all_ref_options + ref_options
             else:
                 print(f"Warning: Reference path does not exist: {path}")
@@ -73,7 +73,7 @@ class Best_Reference(Setup):
         # Get FASTA files from each reference directory
         self.fasta_list = []
         for each_path in all_ref_options:
-            self.fasta_list.extend(glob.glob(f'{each_path}/*.fasta'))
+            self.fasta_list.extend(glob.glob(os.path.join(each_path, '*.fasta')))
             
         # Create dictionary mapping FASTA headers to file paths
         header_dict = {}
@@ -97,7 +97,7 @@ class Best_Reference(Setup):
             return
             
         # Check if sourmash database exists
-        sourmash_db = f'{self.script_path}/../dependencies/ref_db.sbt.zip'
+        sourmash_db = os.path.join(self.script_path, '..', 'dependencies', 'ref_db.sbt.zip')
         if not os.path.exists(sourmash_db):
             print(f"Error: Sourmash database not found: {sourmash_db}")
             self.top_header_found = "Sourmash Database Not Found"
@@ -107,6 +107,9 @@ class Best_Reference(Setup):
             self.top_fasta_header = "Sourmash Database Not Found"
             self.sourmash_df = pd.DataFrame()
             return
+            
+        # Create signature file path
+        fastq_sig_file = f'{self.FASTQ_R1}.sig'
             
         # Run sourmash sketch
         try:
@@ -128,16 +131,19 @@ class Best_Reference(Setup):
             self.sourmash_df = pd.DataFrame()
             return
             
+        # Create search CSV file path
+        search_csv_file = f'{self.sample_name}_search.csv'
+            
         # Run sourmash search
         try:
             search_result = subprocess.run(
                 [
                     "sourmash", 
                     "search", 
-                    f'{self.FASTQ_R1}.sig', 
+                    fastq_sig_file, 
                     sourmash_db,
                     "-o", 
-                    f'{self.sample_name}_search.csv', 
+                    search_csv_file, 
                     '--threshold=0.001'
                 ],
                 capture_output=True,
@@ -154,14 +160,14 @@ class Best_Reference(Setup):
             self.reference_set = None
             self.top_fasta_header = "Sourmash Search Failed"
             self.sourmash_df = pd.DataFrame()
-            if os.path.exists(f'{self.FASTQ_R1}.sig'):
-                os.remove(f'{self.FASTQ_R1}.sig')
+            if os.path.exists(fastq_sig_file):
+                os.remove(fastq_sig_file)
             return
             
         # Read search results
         try:
-            if os.path.exists(f'{self.sample_name}_search.csv') and os.path.getsize(f'{self.sample_name}_search.csv') > 0:
-                self.sourmash_df = pd.read_csv(f'{self.sample_name}_search.csv')
+            if os.path.exists(search_csv_file) and os.path.getsize(search_csv_file) > 0:
+                self.sourmash_df = pd.read_csv(search_csv_file)
             else:
                 print("Warning: Sourmash search produced no results or empty file")
                 self.sourmash_df = pd.DataFrame()
@@ -169,7 +175,7 @@ class Best_Reference(Setup):
             print(f"Error reading sourmash search results: {str(e)}")
             self.sourmash_df = pd.DataFrame()
 
-        #Force a top hit to a specific reference, ie TB lineages to
+        # Force a top hit to a specific reference, ie TB lineages to
         try: 
             self.top_header_found = self.sourmash_df['name'][0].split()[0] # top hit
         except (IndexError, KeyError):
@@ -212,15 +218,15 @@ class Best_Reference(Setup):
                 self.top_fasta_header = 'Error reading reference file'
         
         # Create sourmash directory and move results
-        dir = 'sourmash'
-        if not os.path.exists(dir):
-            os.makedirs(dir)
+        sourmash_dir = 'sourmash'
+        if not os.path.exists(sourmash_dir):
+            os.makedirs(sourmash_dir)
             
-        if os.path.exists(f'{self.sample_name}_search.csv'):
-            shutil.move(f'{self.sample_name}_search.csv', dir)
+        if os.path.exists(search_csv_file):
+            shutil.move(search_csv_file, sourmash_dir)
             
-        if os.path.exists(f'{self.FASTQ_R1}.sig'):
-            os.remove(f'{self.FASTQ_R1}.sig')
+        if os.path.exists(fastq_sig_file):
+            os.remove(fastq_sig_file)
             
         print("#############\n")
         
@@ -246,7 +252,7 @@ class Best_Reference(Setup):
                     count+=1
                     if count <= 10:
                         percentage = f'{row[1]:.1%}'
-                        name = row[4].replace("_", r"\_") if isinstance(row[2], str) else "Invalid Name"
+                        name = row[4].replace("_", r"\_") if isinstance(row[4], str) else "Invalid Name"
                         print(percentage.replace("%", r"\%") + ' & ' + name + r' \\', file=tex)
                         print(r'\hline', file=tex)
             except Exception as e:

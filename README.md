@@ -71,7 +71,7 @@ Benefits of defining SNPs:
 ## 📦 Installation
 
 ```bash
-conda create -c conda-forge -c bioconda -n vsnp3 vsnp3=3.31
+conda create -c conda-forge -c bioconda -n vsnp3 vsnp3=3.32
 conda activate vsnp3
 ```
 

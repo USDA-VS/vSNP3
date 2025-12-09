@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.31"
+__version__ = "3.32"
 
 import os
 import sys
@@ -42,21 +42,21 @@ class Downloader():
         self.sample_name = gca_accession
      
         if annotation_file:
-            file_download = f'datasets download genome accession {gca_accession} --filename {self.sample_name}.zip --include genome,gff3,gbff'
+            file_download = f"datasets download genome accession {gca_accession} --filename {self.sample_name}.zip --include genome,gff3,gbff"
         else:
-            file_download = f'datasets download genome accession {gca_accession} --filename {self.sample_name}.zip --include genome'
+            file_download = f"datasets download genome accession {gca_accession} --filename {self.sample_name}.zip --include genome"
         os.system(file_download)
         count = 1
         while True and count < 5:
             try:
-                with ZipFile(f'{self.sample_name}.zip', 'r') as zf:
+                with ZipFile(f"{self.sample_name}.zip", 'r') as zf:
                     zf.extractall()
-            except Exception:  # More specific exception handling
+            except (FileNotFoundError, PermissionError, Exception) as e:
                 count += 1
-                print(f'Download try {count} in progress')
+                print(f"Download try {count} in progress")
                 for secs in range(30, 0, -1):
                     time.sleep(1)
-                    print('Pausing:', secs, end='\r')
+                    print(f"Pausing: {secs}", end='\r')
                 os.system(file_download)
                 continue
             else:
@@ -65,7 +65,7 @@ class Downloader():
         # Use list comprehension instead of for loop for better readability
         jsonl_files = list(Path('.').rglob('*_report.jsonl'))
         if jsonl_files:
-            jsonl = f'{cwd}/{jsonl_files[0].as_posix()}'
+            jsonl = str(Path(cwd) / jsonl_files[0])
             df = pd.read_json(jsonl, typ='series')
             acc = df['accession']
             
@@ -74,7 +74,7 @@ class Downloader():
                 species = df['checkmInfo']['checkmMarkerSet'].split()[1]
                 if species == 'tuberculosis':
                     species = "tbc"
-            except (KeyError, IndexError):
+            except (KeyError, IndexError, AttributeError):
                 species = "species-not-listed"
                 
             # Extract strain information
@@ -90,67 +90,77 @@ class Downloader():
                         strain = "strain-not-listed"
                         
             # Clean up species and strain names
-            species = re.sub(r'[ ?\./;:]', '_', species)
-            strain = re.sub(r'[ ?\./;:]', '_', strain)
+            species = re.sub(r'[ ?\./;:]', '_', str(species))
+            strain = re.sub(r'[ ?\./;:]', '_', str(strain))
             
-            print(f'{acc}\t{acc}_{species}_{strain}')
-            metadata_string = f'{acc}_{species}_{strain}'
-            print(f'metadata string: {metadata_string}')
+            print(f"{acc}\t{acc}_{species}_{strain}")
+            metadata_string = f"{acc}_{species}_{strain}"
+            print(f"metadata string: {metadata_string}")
 
             self.acc = acc
             self.species = species
             self.strain = strain
             self.metadata_string = metadata_string
 
+            # Initialize annotation file attributes
+            self.gff = None
+            self.gbk = None
+
             # Process FASTA file
             fasta_files = list(Path('.').rglob('*.fna'))
             if fasta_files:
-                fasta = f'{cwd}/{fasta_files[0].as_posix()}'
+                fasta = str(Path(cwd) / fasta_files[0])
                 base_only = os.path.basename(fasta)
                 base_name = re.sub('.fna', '', base_only)
                 base_ext = re.sub('.fna', '.fasta', base_only)
-                updated_file = f'{cwd}/{base_ext}'
+                updated_file = str(Path(cwd) / base_ext)
                 
                 if rename:
-                    os.rename(fasta, f'{metadata_string}.fasta')
+                    renamed_fasta = f"{metadata_string}.fasta"
+                    os.rename(fasta, renamed_fasta)
+                    fasta = renamed_fasta
                 else:
                     os.rename(fasta, updated_file)
+                    fasta = updated_file
                     
-                fasta = updated_file if not rename else f'{metadata_string}.fasta'
-                print(f'fasta: {fasta}')
+                print(f"fasta: {fasta}")
                 self.fasta = fasta
 
                 # Process annotation files if requested
                 if annotation_file or rename:
                     gff_files = list(Path('.').rglob('*genomic.gff'))
                     if gff_files and annotation_file:
-                        gff = f'{cwd}/{gff_files[0].as_posix()}'
+                        gff = str(Path(cwd) / gff_files[0])
                         if rename:
-                            os.rename(gff, f'{cwd}/{metadata_string}.gff')
-                            gff = f'{cwd}/{metadata_string}.gff'
+                            renamed_gff = str(Path(cwd) / f"{metadata_string}.gff")
+                            os.rename(gff, renamed_gff)
+                            self.gff = renamed_gff
                         else:
-                            os.rename(gff, f'{cwd}/{base_name}.gff')
-                            gff = f'{cwd}/{base_name}.gff'
+                            renamed_gff = str(Path(cwd) / f"{base_name}.gff")
+                            os.rename(gff, renamed_gff)
+                            self.gff = renamed_gff
 
                     gbk_files = list(Path('.').rglob('*genomic.gbff'))
                     if gbk_files and annotation_file:
-                        gbk = f'{cwd}/{gbk_files[0].as_posix()}'
+                        gbk = str(Path(cwd) / gbk_files[0])
                         if rename:
-                            os.rename(gbk, f'{cwd}/{metadata_string}.gbk')
-                            gbk = f'{cwd}/{metadata_string}.gbk'
+                            renamed_gbk = str(Path(cwd) / f"{metadata_string}.gbk")
+                            os.rename(gbk, renamed_gbk)
+                            self.gbk = renamed_gbk
                         else:
-                            os.rename(gbk, f'{cwd}/{base_name}.gbk')
-                            gbk = f'{cwd}/{base_name}.gbk'
+                            renamed_gbk = str(Path(cwd) / f"{base_name}.gbk")
+                            os.rename(gbk, renamed_gbk)
+                            self.gbk = renamed_gbk
 
-                        print(f'gff: {gff}')
-                        print(f'gbk: {gbk}')
-                        self.gff = gff
-                        self.gbk = gbk
+                        if self.gff:
+                            print(f"gff: {self.gff}")
+                        if self.gbk:
+                            print(f"gbk: {self.gbk}")
 
     def excel(self, excel_dict):
         """Update the Excel dictionary with sample metadata"""
-        excel_dict['sample'] = f'{self.gca_accession}'
-        excel_dict['metadata'] = f'{self.acc}_{self.species}_{self.strain}'
+        excel_dict['sample'] = self.gca_accession
+        excel_dict['metadata'] = f"{self.acc}_{self.species}_{self.strain}"
 
 
 class Excel_Stats:
@@ -160,7 +170,7 @@ class Excel_Stats:
         """Initialize the Excel stats with the given sample name"""
         self.sample_name = sample_name
         date_stamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        self.excel_filename = f'{sample_name}_{date_stamp}_stats.xlsx'
+        self.excel_filename = f"{sample_name}_{date_stamp}_stats.xlsx"
         excel_dict = {}
         excel_dict['sample'] = sample_name
         excel_dict['date'] = date_stamp
@@ -173,7 +183,7 @@ class Excel_Stats:
         df.to_excel(self.excel_filename)
 
 
-if __name__ == "__main__": # execute if directly access by the interpreter
+if __name__ == "__main__":  # execute if directly access by the interpreter
     parser = argparse.ArgumentParser(prog='PROG', formatter_class=argparse.RawDescriptionHelpFormatter, description=textwrap.dedent('''\
 
     ---------------------------------------------------------
@@ -201,7 +211,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     parser.add_argument('-d', '--debug', action='store_true', dest='debug', default=False, help='keep temp file')
     args = parser.parse_args()
     
-    print(f'\n{os.path.basename(__file__)} SET ARGUMENTS:')
+    print(f"\n{os.path.basename(__file__)} SET ARGUMENTS:")
     print(args)
     print("\n")
 
@@ -213,8 +223,9 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     excel_stats.post_excel()
 
     # Clean up temporary files
-    if os.path.exists(f'{args.accession}.zip'):
-        os.remove(f'{args.accession}.zip')
+    zip_file = f"{args.accession}.zip"
+    if os.path.exists(zip_file):
+        os.remove(zip_file)
     if os.path.exists('README.md'):
         os.remove('README.md')
     if os.path.exists('ncbi_dataset'):
@@ -222,8 +233,8 @@ if __name__ == "__main__": # execute if directly access by the interpreter
 
     # Move all generated files to a dedicated directory
     files_grab = []
-    for files in ('*.fasta', '*.gff', '*gbk', '*xlsx'):
-        files_grab.extend(glob.glob(files))
+    for file_pattern in ('*.fasta', '*.gff', '*.gbk', '*.xlsx'):
+        files_grab.extend(glob.glob(file_pattern))
     acc_dir = args.accession
     if not os.path.exists(acc_dir):
         os.makedirs(acc_dir)

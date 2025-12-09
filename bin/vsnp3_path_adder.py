@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.31"
+__version__ = "3.32"
 
 import os
 import glob
@@ -29,51 +29,65 @@ class Add_Path:
                 self.valid_path = True
             else:
                 self.valid_path = False
-        except TypeError:
-            # If None is passed error because not iterable
-            pass
+        except (TypeError, IndexError):
+            # If None is passed error because not iterable, or empty string
+            self.valid_path = False
         script_path = os.path.dirname(os.path.realpath(__file__))
         self.script_path = script_path
-        abspath = os.path.abspath(f'{script_path}/../dependencies/reference_options_paths.txt')
+        abspath = os.path.abspath(os.path.join(script_path, '../dependencies/reference_options_paths.txt'))
         self.abspath = abspath
         self.added_directory = added_directory
 
     #insure no blank lines are in file
     def remove_blank_lines(self):
-        with open(f'{self.abspath}',"r") as open_file:
-            all_lines=open_file.readlines()
-        with open(f'{self.abspath}',"w") as write_back:  
-            [write_back.write(line) for line in all_lines if line.strip() ] 
+        try:
+            with open(self.abspath, "r") as open_file:
+                all_lines = open_file.readlines()
+            with open(self.abspath, "w") as write_back:  
+                [write_back.write(line) for line in all_lines if line.strip()]
+        except (IOError, OSError) as e:
+            print(f"Error accessing file {self.abspath}: {e}")
 
-    def add_to_path(self,):
+    def add_to_path(self):
         #append new path to file
-        with open(f'{self.abspath}', 'a') as dep_paths:
-            print(f'{self.added_directory}', file=dep_paths)
+        try:
+            with open(self.abspath, 'a') as dep_paths:
+                print(self.added_directory, file=dep_paths)
 
-        # Remove duplicate lines from file
-        with open(self.abspath, "r") as infile:
-            all_lines = [line.rstrip() for line in infile]
-        unique_lines = set(all_lines)
-        with open(self.abspath, "w") as outfile:
-            for each_line in unique_lines:
-                print(f'{each_line}', file=outfile)
+            # Remove duplicate lines from file
+            with open(self.abspath, "r") as infile:
+                all_lines = [line.rstrip() for line in infile]
+            unique_lines = set(all_lines)
+            with open(self.abspath, "w") as outfile:
+                for each_line in unique_lines:
+                    print(each_line, file=outfile)
+        except (IOError, OSError) as e:
+            print(f"Error writing to file {self.abspath}: {e}")
 
-    def show_options(self,):
+    def show_options(self):
         # Show reference options
-        with open(f'{self.abspath}', 'r') as dep_paths:
-            reference_options_paths = [line.rstrip() for line in dep_paths]
+        try:
+            with open(self.abspath, 'r') as dep_paths:
+                reference_options_paths = [line.rstrip() for line in dep_paths]
+        except (IOError, OSError) as e:
+            print(f"Error reading file {self.abspath}: {e}")
+            return
+            
         for path in reference_options_paths:
             print(f'Path: {path}')
-            ref_options = glob.glob(f'{path}/*')
-            ref_options = [x for x in ref_options if os.path.isdir(x)]
-            if ref_options:
-                for option in sorted(ref_options):
-                    print(f'\t{os.path.basename(option)}')
-                print(f'\n')
-            elif not os.path.exists(path):
-                print(f'\tPath does not exist\n')
-            else:
-                print(f'\tPath is empty\n')
+            try:
+                ref_options = glob.glob(os.path.join(path, '*'))
+                ref_options = [x for x in ref_options if os.path.isdir(x)]
+                if ref_options:
+                    for option in sorted(ref_options):
+                        print(f'\t{os.path.basename(option)}')
+                    print('\n')
+                elif not os.path.exists(path):
+                    print('\tPath does not exist\n')
+                else:
+                    print('\tPath is empty\n')
+            except (OSError, IOError) as e:
+                print(f'\tError accessing path {path}: {e}\n')
              
 
 if __name__ == "__main__": # execute if directly access by the interpreter
@@ -107,7 +121,10 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     
     parser.add_argument('-d', '--cwd', action='store', dest='directory', required=False, help='Absolute directory path to be added to find reference option files.')
     parser.add_argument('-s', '--show', action='store_true', dest='show', required=False, help='Show available directories.')
-    parser.add_argument('-v', '--version', action='version', version=f'{os.path.abspath(__file__)}: version {__version__}')
+    
+    # Fixed version argument to avoid potential f-string issues
+    version_info = f'{os.path.abspath(__file__)}: version {__version__}'
+    parser.add_argument('-v', '--version', action='version', version=version_info)
     args = parser.parse_args()
 
     if args.directory:
@@ -119,15 +136,18 @@ if __name__ == "__main__": # execute if directly access by the interpreter
             add_path.show_options()
             print(f'\nPaths files can be manually edited here: {add_path.abspath}\n')
         else:
-            print(f'##### PROVIDE AN ABSOLUTE PATH')
+            print('##### PROVIDE AN ABSOLUTE PATH')
             print(f'Directory Given: "{add_path.added_directory}"')
             print(f'\nPaths files can be manually edited here: {add_path.abspath}\n')
     else:
-        print(f'\nNO NEW DIRECTORY ADDED\nONLY SHOWING WHAT IS CURRENTLY AVAILABLE')
+        print('\nNO NEW DIRECTORY ADDED\nONLY SHOWING WHAT IS CURRENTLY AVAILABLE')
         add_path = Add_Path(None)
         add_path.remove_blank_lines()
-        if os.stat(f'{add_path.abspath}').st_size == 0:
-            print(f'\nPaths have not been added.  File is empty. \nAdd path using -d option.\nSee -h for more options\n\t{add_path.abspath}\n')
-        else:
-            add_path.show_options()
-            print(f'\nPaths files can be manually edited here: {add_path.abspath}\n')
+        try:
+            if os.stat(add_path.abspath).st_size == 0:
+                print(f'\nPaths have not been added.  File is empty. \nAdd path using -d option.\nSee -h for more options\n\t{add_path.abspath}\n')
+            else:
+                add_path.show_options()
+                print(f'\nPaths files can be manually edited here: {add_path.abspath}\n')
+        except (OSError, IOError) as e:
+            print(f'Error accessing file {add_path.abspath}: {e}')
