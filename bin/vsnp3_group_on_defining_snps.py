@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.32"
+__version__ = "3.33"
 
 import os
 import sys
@@ -780,10 +780,12 @@ class Group():
         # Only run html_tree if the option is specified
         if self.html_tree:
             try:
-                run_with_timeout(html_tree, 900, tables.table_to_tree_path)
+                if hasattr(tables, 'table_to_tree_path') and tables.table_to_tree_path:
+                    run_with_timeout(html_tree, 900, tables.table_to_tree_path)
+                else:
+                    print('{} HTML tree generation skipped - large dataset split into multiple files'.format(group))
             except TimeoutError:
                 print('{} HTML tree generation timed out after 15 minutes'.format(group))
-
 
 if __name__ == "__main__": # execute if directly access by the interpreter
     parser = argparse.ArgumentParser(prog='PROG', formatter_class=argparse.RawDescriptionHelpFormatter, description=textwrap.dedent('''\

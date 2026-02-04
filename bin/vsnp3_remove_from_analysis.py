@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.32"
+__version__ = "3.33"
 
 import os
 import sys
@@ -48,15 +48,17 @@ class Remove_From_Analysis:
         # Updated pandas read_excel approach with error handling
         try:
             # Read the first column with no header
+            # df = pd.read_excel(excel_remove, index_col=0, usecols=[0], header=None)
             df = pd.read_excel(excel_remove, index_col=0, usecols=[0], header=None)
         except Exception as e:
             print(f'{bcolors.RED}ERROR: Failed to read Excel file {excel_remove}: {str(e)}{bcolors.ENDC}')
             sys.exit(1)
         
-        if df.empty:
+        if df.index.empty:  # or: if len(df.index) == 0:
             print(f'{bcolors.YELLOW}WARNING: Excel file is empty or has no valid data{bcolors.ENDC}')
             self.remove_list = []
         else:
+            # Your existing loop code works perfectly
             remove_list = []
             for each_sample in df.index:
                 # Convert to string in case of numeric values
