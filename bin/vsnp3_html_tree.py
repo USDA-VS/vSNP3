@@ -8,7 +8,7 @@ from collections import defaultdict
 import os
 import math
 
-__version__ = "3.33"
+__version__ = "3.34"
 
 class Node:
     def __init__(self, name=None):
@@ -328,7 +328,7 @@ def create_hover_points(snps, bootstrap=None, chunk_size=30):
     return chunks
 
 def add_bootstrap_annotation(fig, x, y, bootstrap, offset=10):
-    """Add bootstrap value annotation"""
+    """Add bootstrap value annotation with CSS class for toggling"""
     if bootstrap is not None:
         fig.add_annotation(
             x=x,
@@ -336,7 +336,9 @@ def add_bootstrap_annotation(fig, x, y, bootstrap, offset=10):
             text="{bootstrap:.0f}".format(bootstrap=bootstrap),
             showarrow=False,
             font=dict(size=10),
-            yanchor='bottom'
+            yanchor='bottom',
+            # Add name for identification in JavaScript
+            name='bootstrap_annotation'
         )
 
 def get_sample_profile(node):
@@ -898,7 +900,7 @@ def create_tree_visualization(df, output_file, input_filename, sample_coverage_d
         **layout_common
     )
     
-    # Create HTML with toggle button
+    # Create HTML with toggle buttons
     html_content = """
     <html>
     <head>
@@ -917,21 +919,53 @@ def create_tree_visualization(df, output_file, input_filename, sample_coverage_d
             .button:hover {{
                 background-color: #45a049;
             }}
+            .button.inactive {{
+                background-color: #f44336;
+            }}
+            .button.inactive:hover {{
+                background-color: #d32f2f;
+            }}
+            .control-panel {{
+                text-align: center;
+                margin: 20px 0;
+                padding: 15px;
+                background-color: #f5f5f5;
+                border-radius: 8px;
+                border: 1px solid #ddd;
+            }}
+            .control-group {{
+                display: inline-block;
+                margin: 0 20px;
+            }}
+            .control-label {{
+                font-weight: bold;
+                margin-right: 10px;
+                display: inline-block;
+            }}
         </style>
     </head>
     <body>
-        <div style="text-align: center;">
-            <button class="button" onclick="toggleView()" id="toggleButton">Unrooted</button>
+        <div class="control-panel">
+            <div class="control-group">
+                <span class="control-label">Tree Layout:</span>
+                <button class="button" onclick="toggleView()" id="toggleButton">Unrooted</button>
+            </div>
+            <div class="control-group">
+                <span class="control-label">Bootstrap Values:</span>
+                <button class="button" onclick="toggleBootstrap()" id="bootstrapButton">Hide Bootstrap</button>
+            </div>
         </div>
         <div id="rectangular-tree">{rectangular_tree_html}</div>
         <div id="unrooted-tree" style="display: none;">{unrooted_tree_html}</div>
-        
+
         <script>
+            let bootstrapVisible = true;
+
             function toggleView() {{
                 var rect = document.getElementById('rectangular-tree');
                 var unrooted = document.getElementById('unrooted-tree');
                 var button = document.getElementById('toggleButton');
-                
+
                 if (rect.style.display === 'none') {{
                     rect.style.display = 'block';
                     unrooted.style.display = 'none';
@@ -942,6 +976,102 @@ def create_tree_visualization(df, output_file, input_filename, sample_coverage_d
                     button.textContent = 'Rectangular';
                 }}
             }}
+
+            function toggleBootstrap() {{
+                console.log('Bootstrap toggle clicked, current state:', bootstrapVisible);
+                var button = document.getElementById('bootstrapButton');
+                bootstrapVisible = !bootstrapVisible;
+
+                if (bootstrapVisible) {{
+                    button.textContent = 'Hide Bootstrap';
+                    button.classList.remove('inactive');
+                }} else {{
+                    button.textContent = 'Show Bootstrap';
+                    button.classList.add('inactive');
+                }}
+
+                // Toggle bootstrap annotations in both tree views
+                toggleBootstrapInPlot('rectangular-tree');
+                toggleBootstrapInPlot('unrooted-tree');
+            }}
+
+            function findPlotlyDiv(containerId) {{
+                // Find the actual Plotly div within the container
+                var container = document.getElementById(containerId);
+                if (!container) return null;
+
+                // Look for div with class 'plotly-graph-div' or similar
+                var plotlyDiv = container.querySelector('div[class*="plotly"]') ||
+                               container.querySelector('.js-plotly-plot') ||
+                               container.querySelector('div').children[0];
+
+                return plotlyDiv;
+            }}
+
+            function toggleBootstrapInPlot(containerId) {{
+                console.log('Attempting to toggle bootstrap in:', containerId);
+
+                var plotDiv = findPlotlyDiv(containerId);
+                if (!plotDiv) {{
+                    console.log('Plot div not found for:', containerId);
+                    return;
+                }}
+
+                console.log('Found plot div:', plotDiv);
+                console.log('Plot data available:', !!plotDiv.data);
+                console.log('Plot layout available:', !!plotDiv.layout);
+
+                if (plotDiv.layout && plotDiv.layout.annotations) {{
+                    console.log('Found', plotDiv.layout.annotations.length, 'annotations');
+
+                    var updatedAnnotations = plotDiv.layout.annotations.map(function(annotation, index) {{
+                        // Check if this is a bootstrap annotation (contains only digits)
+                        var isBootstrap = annotation.text && /^\\d+$/.test(annotation.text.toString());
+
+                        if (isBootstrap) {{
+                            console.log('Found bootstrap annotation:', annotation.text, 'at index:', index);
+                            return Object.assign({{}}, annotation, {{
+                                visible: bootstrapVisible
+                            }});
+                        }}
+                        return annotation;
+                    }});
+
+                    console.log('Updating annotations, bootstrap visible:', bootstrapVisible);
+
+                    Plotly.relayout(plotDiv, {{'annotations': updatedAnnotations}})
+                        .then(function() {{
+                            console.log('Successfully updated annotations');
+                        }})
+                        .catch(function(error) {{
+                            console.error('Error updating annotations:', error);
+                        }});
+                }} else {{
+                    console.log('No annotations found in layout');
+                }}
+            }}
+
+            // Initialize after page loads
+            window.addEventListener('load', function() {{
+                console.log('Page loaded, initializing...');
+
+                // Wait for plots to fully render
+                setTimeout(function() {{
+                    console.log('Checking for plots...');
+                    var rectPlot = findPlotlyDiv('rectangular-tree');
+                    var unrootedPlot = findPlotlyDiv('unrooted-tree');
+
+                    console.log('Rectangular plot found:', !!rectPlot);
+                    console.log('Unrooted plot found:', !!unrootedPlot);
+
+                    if (rectPlot && rectPlot.layout) {{
+                        console.log('Rectangular plot annotations:', rectPlot.layout.annotations ? rectPlot.layout.annotations.length : 0);
+                    }}
+                    if (unrootedPlot && unrootedPlot.layout) {{
+                        console.log('Unrooted plot annotations:', unrootedPlot.layout.annotations ? unrootedPlot.layout.annotations.length : 0);
+                    }}
+                }}, 2000);
+            }});
         </script>
     </body>
     </html>
@@ -1126,7 +1256,9 @@ def add_unrooted_traces_improved(fig, node, parent=None, label_offset_base=20, p
                     text="{bootstrap:.0f}".format(bootstrap=node.bootstrap),
                     showarrow=False,
                     font=dict(size=10),
-                    bgcolor='rgba(255,255,255,0.8)'
+                    bgcolor='rgba(255,255,255,0.8)',
+                    # Add name for identification in JavaScript
+                    name='bootstrap_annotation'
                 )
 
     if node.name:

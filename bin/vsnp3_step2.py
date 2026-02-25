@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.33"
+__version__ = "3.34"
 
 import os
 import sys
@@ -31,6 +31,7 @@ from vsnp3_file_setup import Setup
 from vsnp3_group_on_defining_snps import Group
 from vsnp3_reference_options import Ref_Options
 from vsnp3_remove_from_analysis import Remove_From_Analysis
+from vsnp3_input_validator import InputValidator, VCFValidationResults
 
 # Force 'C' locale for consistent decimal point handling
 os.environ["LC_ALL"] = "C"
@@ -40,22 +41,89 @@ global_date_stamp=None
 global_working_dir='.'
 
 class VCF_to_DF():
-    ''' 
+    '''
+    Enhanced VCF processing with comprehensive validation and error reporting
     '''
 
-    def __init__(self, vcf_list=None, debug=False): #write_out=False, 
+    def __init__(self, vcf_list=None, debug=False): #write_out=False,
         '''
-        Start at class call
+        Start at class call with comprehensive VCF validation
         '''
         self.startTime = datetime.now()
-        self.vcf_bad_list=[]
-        cpu_count = int(multiprocessing.cpu_count() / 1.2)
-        dataframes={}
+        self.vcf_bad_list = []
         self.vcf_original_count = len(vcf_list)
+        cpu_count = int(multiprocessing.cpu_count() / 1.2)
+        dataframes = {}
+
+        # Initialize input validator for comprehensive VCF validation
+        validator = InputValidator(debug=debug)
+
+        # COMPREHENSIVE VCF VALIDATION - EARLY DETECTION
+        print(f"\n🔍 VALIDATING {self.vcf_original_count} VCF FILES...")
+        print("="*60)
+
+        # Perform comprehensive validation of all VCF files
+        validation_results = validator.validate_vcf_list(vcf_list)
+        self.validation_results = validation_results  # Store for HTML reporting
+
+        # Print validation summary to terminal
+        validator.print_vcf_validation_summary(validation_results)
+
+        # Write detailed validation log
+        log_file = f'vcf_validation_log-{global_date_stamp}.txt'
+        validator.write_validation_log(log_file, validation_results)
+        print(f"\n📋 Detailed validation log written to: {log_file}")
+
+        # CRITICAL ERROR HANDLING - REFERENCE MISMATCHES
+        if validation_results.reference_mismatches:
+            print("\n" + "="*80)
+            print("🔥💥 CRITICAL ERROR: VCF REFERENCE MISMATCH DETECTED! 💥🔥")
+            print("="*80)
+            print("\nThe following VCF files use different reference genomes:")
+            print("-" * 60)
+
+            for mismatch in validation_results.reference_mismatches:
+                file_name = os.path.basename(mismatch['file'])
+                print(f"❌ {file_name}")
+                print(f"   {mismatch['message']}")
+
+            print("\n💡 SOLUTION:")
+            print("   • All VCF files must use the same reference genome")
+            print("   • Remove or re-process the mismatched files")
+            print("   • Check your vSNP3 step1 reference settings")
+            print("\n📋 Full details in validation log: " + log_file)
+            print("="*80 + "\n")
+
+            # Also log to validation log before exiting
+            with open(log_file, 'a') as f:
+                f.write("\n" + "="*50 + "\n")
+                f.write("CRITICAL ERROR: REFERENCE MISMATCH\n")
+                f.write("="*50 + "\n")
+                for mismatch in validation_results.reference_mismatches:
+                    f.write(f"File: {mismatch['file']}\n")
+                    f.write(f"Error: {mismatch['message']}\n")
+                    f.write("-" * 30 + "\n")
+
+            sys.exit(1)
+
+        # Filter out invalid files but continue with valid ones
+        valid_vcf_list = validation_results.valid_files
+        self.vcf_bad_list = (validation_results.corrupted_files +
+                            validation_results.empty_files +
+                            validation_results.permission_errors +
+                            validation_results.unreadable_files)
+
+        # Update counts after validation
+        print(f"\n✅ PROCEEDING WITH {len(valid_vcf_list)} VALID VCF FILES")
+        if self.vcf_bad_list:
+            print(f"⚠️  EXCLUDED {len(self.vcf_bad_list)} PROBLEMATIC FILES")
+        print("="*60 + "\n")
+
+        # Process only valid VCF files
         if debug:
-            print(f'VCF file count {self.vcf_original_count}')
-            for vcf in vcf_list:
-                print(vcf)
+            print(f'Processing {len(valid_vcf_list)} validated VCF files')
+            for vcf in valid_vcf_list:
+                print(f'Processing: {os.path.basename(vcf)}')
                 vcf, df, vcf_bad_list_temp = self.check_and_fix(vcf)
                 try:
                     self.chrom = df['CHROM'].iloc[0]
@@ -63,22 +131,24 @@ class VCF_to_DF():
                     pass
                 if df is not None:
                     dataframes[os.path.basename(vcf)] = df
-                self.vcf_bad_list = self.vcf_bad_list + vcf_bad_list_temp
+                # Note: vcf_bad_list_temp is now redundant due to pre-validation
         else:
-            print(f'Fixing: Pool processing with {cpu_count} cpus...')
+            print(f'Processing: Pool processing with {cpu_count} cpus...')
             # Use context manager for process pool to ensure proper cleanup
-            with futures.ProcessPoolExecutor(max_workers=cpu_count) as pool: #ProcessPoolExecutor ThreadPoolExecutor ## process works best for calling on multiple files
-                for vcf, df, vcf_bad_list_temp in pool.map(self.check_and_fix, vcf_list):
+            with futures.ProcessPoolExecutor(max_workers=cpu_count) as pool:
+                for vcf, df, vcf_bad_list_temp in pool.map(self.check_and_fix, valid_vcf_list):
                     try:
                         self.chrom = df['CHROM'].iloc[0]
                     except (TypeError, AttributeError):
                         pass
                     if df is not None:
                         dataframes[os.path.basename(vcf)] = df
-                    self.vcf_bad_list = self.vcf_bad_list + vcf_bad_list_temp
+                    # Note: vcf_bad_list_temp should be minimal due to pre-validation
+
         self.dataframes = dataframes
         print(f'\n\nDictionary of dataframes to memory runtime: {datetime.now() - self.startTime}\n')
-        # if write_out: # write out pickle file can be used in downstream applications
+
+        # Pickle for potential downstream use
         with open('dictionary_of_dataframes.pickle', 'wb') as handle:
             pickle.dump(dataframes, handle, protocol=pickle.HIGHEST_PROTOCOL)
         if not debug:
@@ -183,21 +253,22 @@ class VCF_to_DF():
 
 class HTML_Summary():
 
-    def __init__(self, runtime=None, vcf_to_df=None, reference=None, groupings_dict=None, raxml_version=None, all_vcf_boolen=None, args=None, removed_samples=None):
+    def __init__(self, runtime=None, vcf_to_df=None, reference=None, groupings_dict=None, raxml_version=None, all_vcf_boolen=None, args=None, removed_samples=None, validation_results=None):
 
-        htmlfile = open(f'{global_working_dir}/vSNP_step2_summary-{global_date_stamp}.html', 'at')
+        htmlfile = open(f'{global_working_dir}/vSNP_step2_summary-{global_date_stamp}.html', 'at', encoding='utf-8')
         
         #MAKE HTML FILE:
-        print("<html>\n<head><style> table { font-family: arial, sans-serif; border-collapse: collapse; width: 40%; } td, th { border: 1px solid #dddddd; padding: 4px; text-align: left; font-size: 11px; } </style></head>\n<body style=\"font-size:12px;\">", file=htmlfile)
+        print("<html>\n<head><meta charset=\"UTF-8\"><style> table { font-family: arial, sans-serif; border-collapse: collapse; width: 40%; } td, th { border: 1px solid #dddddd; padding: 4px; text-align: left; font-size: 11px; } </style></head>\n<body style=\"font-size:12px;\">", file=htmlfile)
 
-        print(f"<h2>Script ran using <u>{reference} </u> variables<br>", file=htmlfile)
+        print(f"<h2>Script ran using <u>{reference} </u> variables:<br><br>", file=htmlfile)
 
+        print('<div style="font-size:11px; font-weight:normal;">', file=htmlfile)
         if args.metadata:
-            print(f"<h4>Metadata:  {args.metadata}<br>", file=htmlfile)
+            print(f"Metadata:  {args.metadata}<br>", file=htmlfile)
         else:
             print("No metadata for describing samples in trees and tables<br>", file=htmlfile)
         if args.defining_snps:
-            print(f"<h4>Defining SNPs:  {args.defining_snps}<br>", file=htmlfile)
+            print(f"Defining SNPs:  {args.defining_snps}<br>", file=htmlfile)
         else:
             print("No defining SNPs files for grouping and filtering<br>", file=htmlfile)
         if args.gbk:
@@ -205,8 +276,11 @@ class HTML_Summary():
                 print(f"gbk:  {each}<br>", file=htmlfile)
         else:
             print("No gbk for annotation<br>", file=htmlfile)
+        if args.remove_by_name:
+            print(f"Remove from analysis:  {args.remove_by_name}<br>", file=htmlfile)
+        print('</div><br>', file=htmlfile)
 
-        print(f"SNP calling thresholds:  REF: QUAL <u>&lt;{args.n_threshold}</u>, N: QUAL <u>{args.n_threshold}-{args.qual_threshold}</u>, ALT: QUAL <u>&gt;{args.qual_threshold}</u>, Ambigious: <u>AC=1</u>, MQ: <u>&gt;{args.mq_threshold}</u></h4>", file=htmlfile)
+        print(f'<span style="font-size:11px; font-weight:bold;">SNP calling thresholds:  REF: QUAL <u>&lt;{args.n_threshold}</u>, N: QUAL <u>{args.n_threshold}-{args.qual_threshold}</u>, ALT: QUAL <u>&gt;{args.qual_threshold}</u>, Ambigious: <u>AC=1</u>, MQ: <u>&gt;{args.mq_threshold}</u></span></h4>', file=htmlfile)
 
         # Add density filtering information to HTML summary
         if args.density_threshold is not None or args.density_window is not None:
@@ -223,16 +297,105 @@ class HTML_Summary():
             print("\n<h4>All_VCFs is available</h4>", file=htmlfile)
 
         #TIME
-        print(f"Total run time: {runtime}: </h4>", file=htmlfile)
+        # Format runtime to show hours, minutes, seconds without decimals
+        total_seconds = int(runtime.total_seconds())
+        hours = total_seconds // 3600
+        minutes = (total_seconds % 3600) // 60
+        seconds = total_seconds % 60
 
-        # ERROR LIST
-        if len(vcf_to_df.vcf_bad_list) < 1:
-            print("<h2>No corrupt files found</h2>", file=htmlfile)
+        runtime_parts = []
+        if hours > 0:
+            runtime_parts.append(f"{hours} hours")
+        if minutes > 0:
+            runtime_parts.append(f"{minutes} minutes")
+        runtime_parts.append(f"{seconds} seconds")
+
+        runtime_formatted = " ".join(runtime_parts)
+        print(f"Total run time: {runtime_formatted}: </h4>", file=htmlfile)
+
+        # ENHANCED VCF VALIDATION RESULTS SECTION
+        print("\n<h2>🔍 VCF File Validation Results</h2>", file=htmlfile)
+
+        if validation_results:
+            clean_count = validation_results.total_valid - len(validation_results.fixed_files)
+            print("<table style='width: 80%;'>", file=htmlfile)
+            print("<tr style='background-color: #f2f2f2;'><th>Validation Category</th><th>Count</th><th>Status</th></tr>", file=htmlfile)
+
+            # Total files processed
+            print(f"<tr><td><strong>Total VCF Files</strong></td><td>{validation_results.total_files}</td><td>📊 Processed</td></tr>", file=htmlfile)
+            print(f"<tr><td><strong>Valid Files</strong></td><td>{validation_results.total_valid}</td><td style='color: green;'>✅ Passed</td></tr>", file=htmlfile)
+            if validation_results.fixed_files:
+                print(f"<tr><td>&nbsp;&nbsp;Clean (no issues)</td><td>{clean_count}</td><td style='color: green;'>✅ Clean</td></tr>", file=htmlfile)
+                print(f"<tr><td>&nbsp;&nbsp;Auto-fixed (encoding corrected)</td><td>{len(validation_results.fixed_files)}</td><td style='color: darkorange;'>🔧 Fixed &amp; included</td></tr>", file=htmlfile)
+            print(f"<tr><td><strong>Invalid Files</strong></td><td>{validation_results.total_invalid}</td><td style='color: red;'>❌ Failed</td></tr>", file=htmlfile)
+
+            print("</table><br>", file=htmlfile)
+
+            # Auto-fixed files section
+            if validation_results.fixed_files:
+                print(f"<h3 style='color: darkorange;'>🔧 Auto-Fixed Files ({len(validation_results.fixed_files)}) - Included in Analysis</h3>", file=htmlfile)
+                print("<div style='margin-left: 20px; font-size: 10px;'>", file=htmlfile)
+                for entry in validation_results.fixed_files:
+                    print(f"🔧 {os.path.basename(entry['file'])} &mdash; {entry['fix_applied']}<br>", file=htmlfile)
+                print("</div><br>", file=htmlfile)
+
+            # Detailed validation issues
+            if validation_results.total_invalid > 0:
+                print("<h3>📋 Detailed Validation Issues</h3>", file=htmlfile)
+
+                # Corrupted files
+                if validation_results.corrupted_files:
+                    print(f"<h4 style='color: red;'>💥 Corrupted Files ({len(validation_results.corrupted_files)})</h4>", file=htmlfile)
+                    print("<div style='margin-left: 20px; font-size: 10px;'>", file=htmlfile)
+                    for corrupted_file in validation_results.corrupted_files:
+                        print(f"❌ {os.path.basename(corrupted_file)}<br>", file=htmlfile)
+                    print("</div><br>", file=htmlfile)
+
+                # Reference mismatches (should be empty if we got this far)
+                if validation_results.reference_mismatches:
+                    print(f"<h4 style='color: red;'>🔥 Reference Mismatches ({len(validation_results.reference_mismatches)})</h4>", file=htmlfile)
+                    print("<div style='margin-left: 20px; font-size: 10px;'>", file=htmlfile)
+                    for mismatch in validation_results.reference_mismatches:
+                        print(f"❌ {os.path.basename(mismatch['file'])}: {mismatch['message']}<br>", file=htmlfile)
+                    print("</div><br>", file=htmlfile)
+
+                # Empty files
+                if validation_results.empty_files:
+                    print(f"<h4 style='color: orange;'>⚠️ Empty Files ({len(validation_results.empty_files)})</h4>", file=htmlfile)
+                    print("<div style='margin-left: 20px; font-size: 10px;'>", file=htmlfile)
+                    for empty_file in validation_results.empty_files:
+                        print(f"⚠️ {os.path.basename(empty_file)}<br>", file=htmlfile)
+                    print("</div><br>", file=htmlfile)
+
+                # Permission errors
+                if validation_results.permission_errors:
+                    print(f"<h4 style='color: orange;'>🔒 Permission Issues ({len(validation_results.permission_errors)})</h4>", file=htmlfile)
+                    print("<div style='margin-left: 20px; font-size: 10px;'>", file=htmlfile)
+                    for perm_file in validation_results.permission_errors:
+                        print(f"🔒 {os.path.basename(perm_file)}<br>", file=htmlfile)
+                    print("</div><br>", file=htmlfile)
+
+                # Unreadable files
+                if validation_results.unreadable_files:
+                    print(f"<h4 style='color: red;'>❓ Unreadable Files ({len(validation_results.unreadable_files)})</h4>", file=htmlfile)
+                    print("<div style='margin-left: 20px; font-size: 10px;'>", file=htmlfile)
+                    for unreadable_file in validation_results.unreadable_files:
+                        print(f"❓ {os.path.basename(unreadable_file)}<br>", file=htmlfile)
+                    print("</div><br>", file=htmlfile)
+
+            elif not validation_results.fixed_files:
+                print("<h3 style='color: green;'>✅ All VCF files passed validation!</h3>", file=htmlfile)
+
         else:
-            print("\n<h2>Corrupt files removed</h2>", file=htmlfile)
-            for i in vcf_to_df.vcf_bad_list:
-                print(f"{i} <br>", file=htmlfile)
-            print("<br>", file=htmlfile)
+            # Fallback to original error reporting if validation_results not available
+            if len(vcf_to_df.vcf_bad_list) < 1:
+                print("<h3 style='color: green;'>No corrupt files found</h3>", file=htmlfile)
+            else:
+                print(f"\n<h3 style='color: red;'>Corrupt files removed ({len(vcf_to_df.vcf_bad_list)})</h3>", file=htmlfile)
+                print("<div style='margin-left: 20px; font-size: 10px;'>", file=htmlfile)
+                for i in vcf_to_df.vcf_bad_list:
+                    print(f"❌ {os.path.basename(i)}<br>", file=htmlfile)
+                print("</div><br>", file=htmlfile)
 
         #GROUPING TABLE
         group_vcfs_dict = defaultdict(list) #invert the key, values
@@ -261,7 +424,7 @@ class HTML_Summary():
             if len(removed_samples) < 1:
                 print("<h2>No samples purposely removed from initial VCF file dataset</h2>", file=htmlfile)
             else:
-                print('\n<h2>VCF files in "remove_from_analysis.xlsx" and not included from dataset.</h2>', file=htmlfile)
+                print('\n<h2>VCF files removed from dataset using "remove_from_analysis.xlsx".</h2>', file=htmlfile)
                 for each in removed_samples:
                     print(f"{os.path.basename(each)} <br>", file=htmlfile)
                 print("<br>", file=htmlfile)
@@ -589,18 +752,68 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     setup = Setup(debug=args.debug)
     global_date_stamp = setup.date_stamp
     global_working_dir = setup.cwd
+    # WORKING DIRECTORY AND VCF LIST VALIDATION
+    print("\n🔍 VALIDATING WORKING DIRECTORY AND VCF FILES...")
+    print("="*60)
+
+    validator = InputValidator(debug=args.debug)
     cwd_test = False
+
     if args.wd == '.':
         cwd_test = True
+        working_dir = os.getcwd()
+        print(f"Using current directory: {working_dir}")
         vcf_list = glob.glob('*vcf')
         wd_vcf_list = vcf_list
     else:
-        #get VCFs from a directory
+        # Validate and process specified working directory
         wd = os.path.expanduser(args.wd)
         wd = os.path.abspath(wd)
+
+        # Validate directory exists and is accessible
+        is_dir_valid, dir_msg = validator.validate_directory_exists(wd)
+        if not is_dir_valid:
+            print(f"\n❌ WORKING DIRECTORY VALIDATION FAILED:")
+            print(f"   {dir_msg}")
+            print(f"\n💡 SOLUTION:")
+            print(f"   • Check that directory exists: {wd}")
+            print(f"   • Verify you have read permissions")
+            print(f"   • Use absolute path if needed")
+            print("="*60)
+            sys.exit(1)
+
+        print(f"✅ Working directory validated: {wd}")
         vcf_pattern = os.path.join(wd, '*vcf')
         vcf_list = glob.glob(vcf_pattern)
         wd_vcf_list = vcf_list
+
+    # Validate VCF file list is not empty
+    if not vcf_list:
+        print(f"\n❌ NO VCF FILES FOUND!")
+        if args.wd == '.':
+            search_location = "current directory"
+        else:
+            search_location = f"directory: {wd}"
+
+        print(f"   Searched in: {search_location}")
+        print(f"   Pattern: *.vcf")
+        print(f"\n💡 SOLUTIONS:")
+        print(f"   • Verify VCF files exist in the directory")
+        print(f"   • Check file extensions (.vcf)")
+        print(f"   • Ensure vsnp3_step1.py has been run first")
+        print(f"   • Check directory permissions")
+        print("="*60)
+        sys.exit(1)
+
+    print(f"✅ Found {len(vcf_list)} VCF files for processing")
+    if args.debug:
+        print("VCF files found:")
+        for vcf_file in vcf_list[:10]:  # Show first 10 files
+            print(f"   {os.path.basename(vcf_file)}")
+        if len(vcf_list) > 10:
+            print(f"   ... and {len(vcf_list) - 10} more files")
+
+    print("="*60)
 
     def zipit(src, dst):
         zf = zipfile.ZipFile("%s.zip" % (dst), "w", zipfile.ZIP_DEFLATED)
@@ -698,9 +911,14 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     print(f'Before sample filter: {len(vcf_to_df.dataframes)}')
     if args.remove_by_name:
         remove_from_analysis = Remove_From_Analysis(working_directory=global_working_dir, excel_remove=args.remove_by_name, extension="vcf")
+        actually_removed = []
         for each in remove_from_analysis.remove_list:
-            vcf_to_df.dataframes.pop(os.path.basename(each), None)
-        remove_list = remove_from_analysis.remove_list
+            sample_basename = os.path.basename(each)
+            # Only track samples that were actually present in the dataframes
+            if sample_basename in vcf_to_df.dataframes:
+                vcf_to_df.dataframes.pop(sample_basename, None)
+                actually_removed.append(each)
+        remove_list = actually_removed  # Only samples that were actually found and removed
     else:
         remove_list = None
     print(f'After sample filter: {len(vcf_to_df.dataframes)}')
@@ -717,7 +935,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     vcf_to_df.vcf_bad_list = vcf_to_df.vcf_bad_list + group.vcf_bad_list
 
     setup.print_time()
-    HTML_Summary(runtime=setup.run_time, vcf_to_df=vcf_to_df, reference=ro.select_ref, groupings_dict=group.groupings_dict, raxml_version=group.raxml_version, all_vcf_boolen=args.all_vcf, args=args, removed_samples=remove_list) 
+    HTML_Summary(runtime=setup.run_time, vcf_to_df=vcf_to_df, reference=ro.select_ref, groupings_dict=group.groupings_dict, raxml_version=group.raxml_version, all_vcf_boolen=args.all_vcf, args=args, removed_samples=remove_list, validation_results=vcf_to_df.validation_results) 
     
     try:
         os.remove(notification_file)

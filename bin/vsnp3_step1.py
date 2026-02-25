@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.33"
+__version__ = "3.34"
 
 import os
 import sys
@@ -18,6 +18,7 @@ from vsnp3_file_setup import Setup
 from vsnp3_file_setup import bcolors
 from vsnp3_file_setup import Latex_Report
 from vsnp3_file_setup import Excel_Stats
+from vsnp3_input_validator import validate_file_inputs
 
 from vsnp3_fastq_stats_seqkit import FASTQ_Stats
 from vsnp3_best_reference_sourmash import Best_Reference
@@ -640,10 +641,50 @@ if __name__ == "__main__": # execute if directly accessed by the interpreter
 
     # Handle FASTA to FASTQ conversion
     if args.FASTAtoFASTQ:
+        # Validate FASTA file before conversion
+        print(f"🔍 Validating input FASTA file: {args.FASTAtoFASTQ}")
+        is_valid, errors = validate_file_inputs(fasta=[args.FASTAtoFASTQ], debug=args.debug)
+        if not is_valid:
+            print(f"\n❌ FASTA validation failed:")
+            for error in errors:
+                print(f"   {error}")
+            print("\n💡 Please check your FASTA file and try again.")
+            sys.exit(1)
+        print("✅ FASTA validation passed")
+
         fasta_to_paired_fastq = Fasta_to_Paired_Fastq(args.FASTAtoFASTQ, coverage=100, read_length=300)
         args.FASTQ_R1 = fasta_to_paired_fastq.fastq_r1_file
         args.FASTQ_R2 = fasta_to_paired_fastq.fastq_r2_file
         print('Conversion to FASTQ completed')
+
+    # COMPREHENSIVE INPUT VALIDATION
+    print("\n🔍 VALIDATING INPUT FILES...")
+    print("="*50)
+
+    is_valid, errors = validate_file_inputs(
+        fastq_r1=args.FASTQ_R1,
+        fastq_r2=args.FASTQ_R2,
+        fasta=args.FASTA,
+        gbk_list=args.gbk,
+        debug=args.debug
+    )
+
+    if not is_valid:
+        print(f"\n❌ INPUT VALIDATION FAILED:")
+        print("-" * 30)
+        for error in errors:
+            print(f"   {error}")
+
+        print(f"\n💡 SOLUTIONS:")
+        print("   • Check that all file paths are correct")
+        print("   • Verify files exist and are readable")
+        print("   • Ensure FASTQ files are properly formatted")
+        print("   • Confirm FASTA files have valid sequences")
+        print("="*50)
+        sys.exit(1)
+
+    print("✅ All input files validated successfully")
+    print("="*50 + "\n")
 
     # Handle output directory setup
     if args.output_dir:
