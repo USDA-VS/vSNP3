@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-__version__ = "3.34"
+__version__ = "3.35"
 
 import os
 import shutil
@@ -113,16 +113,27 @@ class Annotation():
                             self.direction = "forward gene"
                             self.cds_nt_start = part.start
                             self.cds_nt_end = part.end
-                            aa_location = (position - feature.location.start) / 3
-                            aa_residue, nt_in_aa = str(aa_location).split('.')
-                            
+                            # Calculate position within this CDS part correctly
+                            # Convert 1-based genomic position to 0-based for BioPython compatibility
+                            position_0based = position - 1  # Convert to 0-based
+                            relative_position = position_0based - part.start  # position relative to start of this CDS part
+                            codon_number = relative_position // 3       # which codon (0-based)
+
+                            # Set the codon boundaries using 0-based coordinates
+                            left = part.start + codon_number * 3        # start of the codon (0-based)
+                            right = left + 3                           # end of the codon (3 nucleotides)
+
+                            # Calculate position within the codon based on actual codon boundaries
+                            nt_index_aa = position_0based - left       # index within the codon (0, 1, or 2)
+                            self.aa_pos = nt_index_aa + 1              # 1-based position within codon for display
+
                             # Safely extract gene information
                             try:
                                 if hasattr(feature, 'qualifiers') and 'gene' in feature.qualifiers:
                                     self.gene = feature.qualifiers["gene"][0]
                             except (KeyError, IndexError, TypeError):
                                 pass
-                                
+
                             # Safely extract product information with fallback hierarchy
                             try:
                                 if hasattr(feature, 'qualifiers') and 'product' in feature.qualifiers:
@@ -139,32 +150,14 @@ class Annotation():
                                     except (KeyError, IndexError, TypeError):
                                         feature_type = getattr(feature, 'type', 'unknown')
                                         self.product = f'{feature_type}, product_unknown'
-                                        
-                            if nt_in_aa == '0':
-                                nt_index_aa = 2 #set index
-                                right = position
-                                left = position - 3
-                                self.aa_pos = 3
-                            elif nt_in_aa[0] == '3':
-                                nt_index_aa = 0 #set index
-                                right = position + 2
-                                left = position - 1
-                                self.aa_pos = 1
-                            elif nt_in_aa[0] == '6':
-                                nt_index_aa = 1 #set index
-                                right = position + 1
-                                left = position - 2
-                                self.aa_pos = 2
-                            else:
-                                #error out without exception to quit
-                                print(f"Error: Unexpected nt_in_aa value: {nt_in_aa}")
-                                return
                                 
-                            self.aa_residue_pos = int((left - part.start) / 3)
-                            self.aa_residue_pos = self.aa_residue_pos + 1 # aa is zero based so add 1
-                            
+                            # Calculate amino acid residue position (1-based)
+                            self.aa_residue_pos = codon_number + 1  # Convert 0-based codon number to 1-based AA position
+
                             if hasattr(part, 'strand') and part.strand == -1: # Reverse complement
-                                self.aa_residue_pos = int((part.end - left) / 3)
+                                # For reverse strand, calculate from the end
+                                total_codons = (part.end - part.start) // 3
+                                self.aa_residue_pos = total_codons - codon_number
                                 
                             # Safely extract sequence with bounds checking
                             try:
@@ -177,31 +170,24 @@ class Annotation():
                                 print(f"Error extracting sequence: {e}")
                                 return
                                 
+                            # Handle reverse strand
                             if hasattr(part, 'strand') and part.strand == -1: # Reverse complement
-                                try:
-                                    rbc = rbc.reverse_complement()
-                                    nucleotide_seq = Seq(snp_nt) if snp_nt is not None else None
-                                    snp_nt = str(nucleotide_seq.reverse_complement()) if nucleotide_seq is not None else None
-                                    self.direction = "reverse gene"
-                                    block = True
-                                    if nt_index_aa == 0:
-                                        nt_index_aa = 2
-                                        block = False
-                                    elif nt_index_aa == 2 and block == True:
-                                        nt_index_aa = 0
-                                except Exception as e:
-                                    print(f"Error processing reverse complement: {e}")
-                                    return
-                                    
+                                self.direction = "reverse gene"
+                                # For reverse strand, keep genomic sequence orientation and position mapping
+                                # No index flipping needed since we're using genomic coordinates directly
+
                             rbc_list = list(str(rbc))  # Convert Bio.Seq to string first
                             self.reference_base_code = "".join(rbc_list)
-                            
+
+
+
+
                             # Safely lookup reference amino acid
                             try:
                                 self.ref_aa = self.aa_code.get(self.reference_base_code, 'unfound_ref_AA')
                             except (KeyError, TypeError):
                                 self.ref_aa = 'unfound_ref_AA'
-                                
+
                             #change rbc_list to represent SNP
                             if snp_nt is not None:
                                 try:

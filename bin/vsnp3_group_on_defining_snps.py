@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.34"
+__version__ = "3.35"
 
 import os
 import sys
@@ -309,10 +309,10 @@ class Group():
                 if annotation.reference_base_code == 'n/a':
                     annotation_dict[abs_pos] = 'position not annotated'
                 else:
-                    annotation_dict[abs_pos] = '{}->{}, {}:{}{}{}, {}, {}'.format(
+                    annotation_dict[abs_pos] = '{}->{}, {}:{}{}{}, {}, {}, codon_pos_{}'.format(
                         annotation.reference_base_code, annotation.snp_base_code,
                         annotation.gene, annotation.ref_aa, annotation.aa_residue_pos,
-                        annotation.snp_aa, annotation.product, annotation.mutation_type)
+                        annotation.snp_aa, annotation.product, annotation.mutation_type, annotation.aa_pos)
         self.annotation_df = pd.DataFrame(annotation_dict.items(), columns=['abs_pos', 'annotation'])
         print('\n\tGetting dataframe essentials  Selection Time: {}\n'.format(datetime.now() - self.startTime))
 

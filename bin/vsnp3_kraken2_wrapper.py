@@ -17,7 +17,7 @@ from pathlib import Path
 
 from krona_lca_all import force_tax_number
 
-__version__ = "3.34"
+__version__ = "3.35"
 
 class Kraken2_Identification:
     ''' 
