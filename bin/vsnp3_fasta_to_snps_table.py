@@ -287,7 +287,7 @@ class Tables:
             column = tree_order[column_header]
             # for each element in the column
             for element in column:
-                if element != column[0] and element != '-':
+                if element != column.iloc[0] and element != '-':
                     count = count + 1
             snp_per_column.append(count)
         row1 = pd.Series(snp_per_column, tree_order.columns, name="snp_per_column")
@@ -301,7 +301,7 @@ class Tables:
             # for each element in the column
             # skip the first element
             for element in column[1:]:
-                if element == column[0] or element == '-':
+                if element == column.iloc[0] or element == '-':
                     count = count + 1
                 else:
                     break
@@ -332,7 +332,7 @@ class Tables:
             column = tree_order2[column_header]
             index_list_of_ref_differences=[]
             for ind, list_item in enumerate(column[1:].to_list()):
-                if list_item != column[0] and list_item != '-':
+                if list_item != column.iloc[0] and list_item != '-':
                     index_list_of_ref_differences.append(ind)
             if index_list_of_ref_differences:  # Check if list is not empty
                 c = itertools.count()
