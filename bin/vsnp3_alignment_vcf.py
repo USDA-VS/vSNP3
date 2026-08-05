@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-__version__ = "3.35"
+from vsnp3_version import __version__
 
 import os
 import subprocess
@@ -14,9 +14,8 @@ from datetime import datetime
 import pandas as pd
 from Bio import SeqIO
 
+import vsnp3_run
 from vsnp3_file_setup import Setup
-from vsnp3_file_setup import Banner
-from vsnp3_file_setup import Latex_Report
 from vsnp3_file_setup import Excel_Stats
 from vsnp3_fastq_stats_seqkit import FASTQ_Stats
 from vsnp3_vcf_annotation import VCF_Annotation
@@ -61,8 +60,13 @@ class Alignment(Setup):
         '''
         description
         '''
-        fq = FASTQ_Stats(self.FASTQ_R1, self.FASTQ_R2)
-        fq.run()
+        # A FASTQ_Stats(...).run() used to sit here.  Its result was assigned to a
+        # local that nothing else in this file referenced, and FASTQ_Stats.run()
+        # makes two full passes over each read file -- `seqkit stats -a` and
+        # `seqkit fx2tab | awk`.  So every sample paid four complete gzip
+        # decompress-and-scan passes, ~25 ms per MB of compressed reads, for a
+        # value that was thrown away.  vsnp3_step1.py already computes and uses
+        # the same statistics.
         sample_name = self.sample_name
         reference = self.reference
         samfile = f'{sample_name}.sam'
@@ -94,6 +98,10 @@ class Alignment(Setup):
             run_set = f'bwa mem -M -R "@RG\\tID:{sample_name}\\tSM:{sample_name}\\tPL:ILLUMINA\\tPI:250" -t 8 {reference} {self.FASTQ_R1} > {samfile}'
             os.system(run_set)
         alignment_vcf_run_summary.append(f'SYSTEM CALL: {run_set} -- {datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}')
+        # The aligner writes through a shell redirect and its exit status is not
+        # visible here, so check the artifact instead.  An empty SAM is what a
+        # failed bwa leaves behind, and every later stage happily processes it.
+        vsnp3_run.require_output(samfile, min_bytes=100, what=f'{self.aligner} SAM output')
 
         # http://www.htslib.org/workflow/fastq.html
         samfixmate = f'samtools fixmate -O bam,level=1 -m {samfile} {fixmate_bamfile}'
@@ -105,6 +113,20 @@ class Alignment(Setup):
         alignment_vcf_run_summary.append(f'SYSTEM CALL: {samfixmate} -- {datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}')
         alignment_vcf_run_summary.append(f'SYSTEM CALL: {samsort} -- {datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}')
         alignment_vcf_run_summary.append(f'SYSTEM CALL: {sammarkup} -- {datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}')
+        vsnp3_run.require_output(fixmate_bamfile, bam=True, what='samtools fixmate output')
+        vsnp3_run.require_output(pos_srt_bamfile, bam=True, what='samtools sort output')
+        vsnp3_run.require_output(nodup_bamfile, bam=True, what='samtools markdup output')
+        vsnp3_run.require_output('markduplicate_stats.txt',
+                                 what='samtools markdup statistics')
+        mapped = vsnp3_run.mapped_read_count(nodup_bamfile)
+        if mapped == 0:
+            raise vsnp3_run.ExternalToolError(
+                [self.aligner.lower(), reference, self.FASTQ_R1],
+                detail=f'no reads aligned to {os.path.basename(reference)}. Coverage '
+                       f'would be 0x everywhere, so no meaningful VCF can be produced. '
+                       f'Check that the reference matches the organism sequenced.')
+        alignment_vcf_run_summary.append(
+            f'NOTE: {mapped} reads mapped -- {datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}')
 
         # http://www.htslib.org/doc/samtools-markdup.html
         alignment_vcf_run_summary.append(f'NOTE: Read stats gathered by markduplicate_stats.txt -- {datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}')
@@ -132,7 +154,8 @@ class Alignment(Setup):
             self.DUPLICATION_RATIO = 0
 
         os.system(f'samtools index {nodup_bamfile}')
-        
+        vsnp3_run.require_output(f'{nodup_bamfile}.bai', what='samtools index output')
+
         if self.nanopore:
             def qual_value_update(vcf):
                 df = pd.read_csv(vcf, sep='\t', header=None, names=["CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT", "Sample"], comment='#')
@@ -163,11 +186,15 @@ class Alignment(Setup):
             os.system(bcftools_mpileup)
             alignment_vcf_run_summary.append(f'NOTE: Nanopore - bcftools mpileup used to call SNPs and make VCF files *** -- {datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}')
             alignment_vcf_run_summary.append(f'SYSTEM CALL: {bcftools_mpileup} -- {datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}')
-            
+            # A shell pipeline reports only the last exit status, so check the file.
+            vsnp3_run.require_output(unfiltered_hapall, vcf_records=True,
+                                     what='bcftools call output')
+
             # Apply filters using local bcftools
             bcftools_filter = f'bcftools view -i \'QUAL>20\' -v snps -o temp2.recode.vcf {unfiltered_hapall}'
             os.system(bcftools_filter)
             alignment_vcf_run_summary.append(f'SYSTEM CALL: {bcftools_filter} -- {datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}')
+            vsnp3_run.require_output('temp2.recode.vcf', what='bcftools view output')
             
             # Update quality values and rename files
             qp100 = qual_value_update('temp2.recode.vcf')
@@ -189,6 +216,10 @@ class Alignment(Setup):
             freebayes_parallel = f'freebayes-parallel chrom_ranges.txt 8 -E -1 -e 1 -u --strict-vcf -f {reference} {nodup_bamfile} > {unfiltered_hapall}' #2>/dev/null'
             os.system(freebayes_parallel)
             alignment_vcf_run_summary.append(f'SYSTEM CALL: {freebayes_parallel} -- {datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}')
+            # freebayes-parallel writes through a shell redirect, so its exit status
+            # is invisible here; an empty VCF is what a failed run leaves behind.
+            vsnp3_run.require_output(unfiltered_hapall, vcf_records=True,
+                                     what='freebayes output')
             # os.system(f'bcftools mpileup --threads 8 -Ou -f {reference} {nodup_bamfile} | bcftools call --threads 8 -mv -Ov -o {unfiltered_hapall}')
             write_fix = open(mapfix_hapall, 'w+')
             with open(unfiltered_hapall, 'r') as unfiltered:
@@ -280,7 +311,7 @@ class Alignment(Setup):
             shutil.move(unmapped_dir, alignment)
         files_grab = []
         for files in ('*_nodup.bam', '*_zc.vcf', '*_nodup.bam.bai', '*_annotated.vcf'):
-            files_grab.extend(glob.glob(files))
+            files_grab.extend(sorted(glob.glob(files)))
         for each in files_grab:
             shutil.move(each, alignment)
         self.zero_coverage_vcf_file_path = f'{self.cwd}/{alignment}/{os.path.basename(self.zero_coverage.zero_coverage_vcf)}'
@@ -300,7 +331,7 @@ class Alignment(Setup):
             os.makedirs(temp_dir)
         files_grab = []
         for files in ('*_unmapped*.fastq.gz', '*_all.bam', '*_fixmate.bam', '*_pos_srt.bam', 'markduplicate_stats.txt', '*.bai', '*_filtered_hapall.vcf', '*_mapfix_hapall.vcf', '*_unfiltered_hapall.vcf', '*_filtered_hapall_nanopore.vcf', '*.sam', '*.amb', '*.ann', '*.bwt', '*.pac', '*.fasta.sa', '*_sorted.bam', '*.dict', 'chrom_ranges.txt', '*.fai', 'dup_metrics.csv'):
-            files_grab.extend(glob.glob(files))
+            files_grab.extend(sorted(glob.glob(files)))
         for each in files_grab:
             shutil.move(each, temp_dir)
 
@@ -340,8 +371,15 @@ class Alignment(Setup):
             except (subprocess.SubprocessError, FileNotFoundError, IndexError):
                 programs.append('Samtools: version unknown')
                 
-            if hasattr(assemble, 'spades_version'):
-                programs.append(assemble.spades_version)
+            # `assemble` is a local of run(), only bound when --assemble_unmap was
+            # used, so referencing it here raised UnboundLocalError on every default
+            # run.  The generic handler below turned that into an "Error getting
+            # program versions" line, which vsnp3_step1.py then filtered out of the
+            # run log by matching on the message text -- hiding the symptom rather
+            # than the cause.  run() records the object on self, so ask for that.
+            spades_version = getattr(getattr(self, 'assemble', None), 'spades_version', None)
+            if spades_version:
+                programs.append(spades_version)
         except Exception as e:
             programs.append(f'Error getting program versions: {str(e)}')
         
@@ -349,51 +387,15 @@ class Alignment(Setup):
         self.alignment_vcf_run_summary = alignment_vcf_run_summary
 
 
-    def latex(self, tex, groups=None):
-        blast_banner = Banner(f'Read Mapping against {self.reference_name} using {self.aligner}')
-        print(r'\begin{table}[ht!]', file=tex)
-        print(r'\begin{adjustbox}{width=1\textwidth}', file=tex)
-        print(r'\begin{center}', file=tex)
-        print(r'\includegraphics[scale=1]{' + blast_banner.banner + '}', file=tex)
-        print(r'\end{center}', file=tex)
-        print(r'\end{adjustbox}', file=tex)
-        print(r'\begin{adjustbox}{width=1\textwidth}', file=tex)
-        
-        print(r'\begin{tabular}{ l | l | l | l | l | l | l }', file=tex)
-        print(r'Mapped Paired Reads & Mapped Single Reads & Unmapped Reads & Unmapped Percent & \multicolumn{2}{l}{Unmapped Assembled Contigs} \\', file=tex)
-        print(r'\hline', file=tex) 
-        mapped_reads = self.READS_PAIRED + self.READS_SINGLE
-        total_reads = mapped_reads + self.READS_EXCLUDED
-        self.freq_unmapped_reads = self.READS_EXCLUDED / total_reads
-        print(f'{self.READS_PAIRED:,} & {self.READS_SINGLE:,} & {self.READS_EXCLUDED:,} & {(self.freq_unmapped_reads*100):,.1f}\\% & ' + r'\multicolumn{2}{l}{' + f'{self.assembly_message}' + r'} \\', file=tex)
-        print(r'\hline', file=tex)
-        print(r'\hline', file=tex)
-        
-        print(r'Duplicate Paired Reads & Duplicate Single Reads & \multicolumn{5}{l}{Duplicate Percent of Mapped Reads} \\', file=tex)
-        print(r'\hline', file=tex)
-        print(f'{self.DUPLICATE_PAIR:,} & {self.DUPLICATE_SINGLE:,} & ' + r'\multicolumn{5}{l}{' + f'{(self.DUPLICATION_RATIO*100):,.1f}' + r'\%} \\', file=tex)
-        print(r'\hline', file=tex)
-        print(r'\hline', file=tex)
-
-        print(f'BAM File & Reference Length & Genome with Coverage & Average Depth & No Coverage Bases & Ambiguous SNPs & Quality SNPs {r"\\"}', file=tex)
-        print(r'\hline', file=tex)
-        bam = self.zero_coverage.bam.replace('_', r'\_')
-        print(f'{bam} & {self.zero_coverage.reference_length:,} & {(self.zero_coverage.genome_coverage*100):,.2f}\\% & {self.zero_coverage.ave_coverage:,.1f}X & {self.zero_coverage.total_zero_coverage:,} & {self.zero_coverage.ac1_count:,} & {self.zero_coverage.good_snp_count:,} {r"\\"}', file=tex)
-        print(r'\hline', file=tex)
-
-        if groups:
-            print(r'\hline', file=tex)
-            print(r'Group Assignment & \multicolumn{4}{l}{ ' + f'{groups}' + r'} \\', file=tex)
-            print(r'\hline', file=tex)
-
-        print(r'\end{tabular}', file=tex)
-
-        print(r'\end{adjustbox}', file=tex)
-        print(r'\\', file=tex)
-        print(r'\end{table}', file=tex)
-    
     def excel(self, excel_dict):
-        self.aligner
+        # Computed here rather than read off an attribute: it used to be set as a
+        # side effect of building the LaTeX table, so excel() only worked if that
+        # ran first.
+        total_reads = self.READS_PAIRED + self.READS_SINGLE + self.READS_EXCLUDED
+        try:
+            self.freq_unmapped_reads = self.READS_EXCLUDED / total_reads
+        except ZeroDivisionError:
+            self.freq_unmapped_reads = 0
         excel_dict['Aligner'] = f'{self.aligner}'
         excel_dict['Mapped Paired Reads'] = f'{self.READS_PAIRED:,}'
         excel_dict['Mapped Single Reads'] = f'{self.READS_SINGLE:,}'
@@ -444,7 +446,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
         fasta_name=[]
         for each in FASTAs:
             basenames.append(os.path.basename(each))
-            fasta_name.append(re.sub('\..*', '', os.path.basename(each)))
+            fasta_name.append(re.sub(r'\..*', '', os.path.basename(each)))
         fastas_used = ", ".join(basenames)
         #concatenate FASTA list
         concatenated_TEMP = f'{"_".join(fasta_name)}.temp'
@@ -460,11 +462,6 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     alignment = Alignment(SAMPLE_NAME=args.SAMPLE_NAME, FASTQ_R1=args.FASTQ_R1, FASTQ_R2=args.FASTQ_R2, reference=concatenated_FASTA, nanopore=args.nanopore, gbk=args.gbk, assemble_unmap=args.assemble_unmap, debug=args.debug)
     alignment.run()
 
-    #Latex report
-    latex_report = Latex_Report(alignment.sample_name)
-    alignment.latex(latex_report.tex)
-    latex_report.latex_ending()
-
     #Excel Stats
     excel_stats = Excel_Stats(alignment.sample_name)
     excel_stats.excel_dict["FASTA/s"] = fastas_used
@@ -475,8 +472,8 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     if not os.path.exists(temp_dir):
         os.makedirs(temp_dir)
     files_grab = []
-    for files in ('*.aux', '*.log', '*tex', '*png', '*out', '*_all.bam', '*.bai', '*_filtered_hapall.vcf', '*_mapfix_hapall.vcf', '*_unfiltered_hapall.vcf', '*.sam', '*.amb', '*.ann', '*.bwt', '*.pac', '*.fasta.sa', '*_sorted.bam', '*.dict', 'chrom_ranges.txt', 'dup_metrics.csv', '*.fai'):
-        files_grab.extend(glob.glob(files))
+    for files in ('*.log', '*out', '*_all.bam', '*.bai', '*_filtered_hapall.vcf', '*_mapfix_hapall.vcf', '*_unfiltered_hapall.vcf', '*.sam', '*.amb', '*.ann', '*.bwt', '*.pac', '*.fasta.sa', '*_sorted.bam', '*.dict', 'chrom_ranges.txt', 'dup_metrics.csv', '*.fai'):
+        files_grab.extend(sorted(glob.glob(files)))
     for each in files_grab:
         shutil.move(each, temp_dir)
 

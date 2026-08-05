@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.35"
+from vsnp3_version import __version__
 
 import os
 import glob
@@ -76,7 +76,7 @@ class Add_Path:
         for path in reference_options_paths:
             print(f'Path: {path}')
             try:
-                ref_options = glob.glob(os.path.join(path, '*'))
+                ref_options = sorted(glob.glob(os.path.join(path, '*')))
                 ref_options = [x for x in ref_options if os.path.isdir(x)]
                 if ref_options:
                     for option in sorted(ref_options):

@@ -71,7 +71,7 @@ Benefits of defining SNPs:
 ## 📦 Installation
 
 ```bash
-conda create -c conda-forge -c bioconda -n vsnp3 vsnp3=3.35
+conda create -c conda-forge -c bioconda -n vsnp3 vsnp3=3.36
 conda activate vsnp3
 ```
 
@@ -135,7 +135,7 @@ Step 2 combines results from multiple samples:
 - Creates SNP matrices from any combination of processed samples
 - Builds phylogenetic trees showing evolutionary relationships
 - Handles mixed SNPs using IUPAC ambiguity codes
-- Generates HTML summary reports for easy interpretation
+- Generates HTML summary reports for easy interpretation, with a PDF of each
 
 Sample outputs:
 <p align="center">

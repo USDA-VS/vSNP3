@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.35"
+from vsnp3_version import __version__
 
 import os
 import sys
@@ -12,11 +12,12 @@ import locale
 import argparse
 import textwrap
 import importlib.metadata
+import json
 import platform
 
 from vsnp3_file_setup import Setup
 from vsnp3_file_setup import bcolors
-from vsnp3_file_setup import Latex_Report
+from vsnp3_file_setup import HtmlReport
 from vsnp3_file_setup import Excel_Stats
 from vsnp3_input_validator import validate_file_inputs
 
@@ -25,7 +26,8 @@ from vsnp3_best_reference_sourmash import Best_Reference
 from vsnp3_reference_options import Ref_Options
 from vsnp3_alignment_vcf import Alignment
 from vsnp3_spoligotype import Spoligo
-from vsnp3_group_reporter import GroupReporter
+from vsnp3_version import NANOPORE_AVG_READ_LEN_CUTOFF
+from vsnp3_group_reporter import GroupLookupError, GroupReporter
 from vsnp3_fasta_to_fastq import Fasta_to_Paired_Fastq
 
 # Force 'C' locale for consistent decimal point handling
@@ -44,7 +46,7 @@ class vSNP3_Step1(Setup):
         Setup.__init__(self, SAMPLE_NAME=SAMPLE_NAME, FASTQ_R1=FASTQ_R1)
         self.assemble_unmap = assemble_unmap
         self.spoligo = spoligo
-        self.latex_report = Latex_Report(self.sample_name)
+        self.report = HtmlReport(self.sample_name)
         self.excel_stats = Excel_Stats(self.sample_name)
         self.nanopore = nanopore
         
@@ -89,35 +91,63 @@ class vSNP3_Step1(Setup):
                 
                 fastq_stats = FASTQ_Stats(FASTQ_R1=self.FASTQ_R1, FASTQ_R2=self.FASTQ_R2, debug=self.debug)
                 fastq_stats.run()
-                fastq_stats.latex(self.latex_report.tex)
                 fastq_stats.excel(self.excel_stats.excel_dict)
-                self.latex_report.latex_ending()
+                self.report.add_notice(
+                    'No reference could be determined, so no alignment was performed. '
+                    'Only read statistics are reported.')
+                # The ranking is the evidence for why nothing matched, so it is
+                # worth more on this path than on a successful one.
+                self.report.add_table('Sourmash reference similarity',
+                                      ('Similarity', 'ID'),
+                                      self.best_reference.similarity_rows())
+                self.write_report()
                 self.excel_stats.post_excel()
                 
                 temp_dir = './temp'
                 if not os.path.exists(temp_dir):
                     os.makedirs(temp_dir)
                 files_grab = []
-                for files in ('*.aux', '*.log', '*tex', '*png', '*out', "*_seqkit_stats.txt"):
-                    files_grab.extend(glob.glob(files))
+                for files in ('*.log', '*out', "*_seqkit_stats.txt"):
+                    files_grab.extend(sorted(glob.glob(files)))
                 for each in files_grab:
                     shutil.move(each, temp_dir)
 
                 if not debug:  # Use the debug parameter directly
                     shutil.rmtree(temp_dir)
-                sys.exit()
-                
+                # No reference means no alignment and no VCF.  Exiting 0 told every
+                # wrapper and scheduler this sample had succeeded.
+                sys.exit(1)
+
+            # Checked before concat_fasta, which iterates it.  The check used to sit
+            # after the call, so a missing FASTA raised "'NoneType' object is not
+            # iterable" from inside concat_fasta and this message was unreachable.
+            if not reference_options.fasta:
+                print('Sourmash unable to find a suitable match. Provide a FASTA (-f) or directory name with dependencies (-n)')
+                sys.exit(1)
+
             concatenated_FASTA = self.concat_fasta(reference_options.fasta)
             self.gbk = reference_options.gbk
             self.excel_stats.excel_dict["Reference"] = f'{reference_options.select_ref} by Best Reference'
             Setup.__init__(self, SAMPLE_NAME=SAMPLE_NAME, FASTA=concatenated_FASTA, FASTQ_R1=FASTQ_R1, FASTQ_R2=FASTQ_R2, gbk=reference_options.gbk, debug=debug)
-            self.best_reference.latex(self.latex_report.tex)
             self.best_reference.excel(self.excel_stats.excel_dict)
-            
-            if reference_options.fasta is None:
-                print('Sourmash unable to find a suitable match. Provide a FASTA (-f) or directory name with dependencies (-n)')
-                sys.exit(0)
+            self.report.add_table('Sourmash reference similarity',
+                                  ('Similarity', 'ID'),
+                                  self.best_reference.similarity_rows())
             self.reference_type = self.best_reference.reference_set
+
+    def write_report(self):
+        '''
+        Write the report as HTML, then as a PDF rendered from that HTML.
+
+        Both paths that finish a run come through here, so neither can end up
+        with only one of the two files.
+        '''
+        html_path = self.report.write(self.excel_stats.excel_dict)
+        print(f'\tReport: {bcolors.WHITE}{html_path}{bcolors.ENDC}')
+        pdf_path = self.report.to_pdf()
+        if pdf_path:
+            print(f'\tReport PDF: {bcolors.WHITE}{pdf_path}{bcolors.ENDC}')
+        return html_path, pdf_path
 
     def concat_fasta(self, FASTAs):
         """
@@ -149,7 +179,6 @@ class vSNP3_Step1(Setup):
         '''
         fastq_stats = FASTQ_Stats(SAMPLE_NAME=self.sample_name, FASTQ_R1=self.FASTQ_R1, FASTQ_R2=self.FASTQ_R2, debug=self.debug)
         fastq_stats.run()
-        fastq_stats.latex(self.latex_report.tex)
         fastq_stats.excel(self.excel_stats.excel_dict)
 
         # Test for Mycobacterium
@@ -164,33 +193,57 @@ class vSNP3_Step1(Setup):
         if self.spoligo:
             spoligo = Spoligo(SAMPLE_NAME=self.sample_name, FASTQ_R1=self.FASTQ_R1, FASTQ_R2=self.FASTQ_R2, debug=self.debug)
             spoligo.spoligo()
-            spoligo.latex(self.latex_report.tex)
             spoligo.excel(self.excel_stats.excel_dict)
 
-        # Determine if nanopore sequencing based on read length
-        if int(float(fastq_stats.R1.max_len.replace(',', ''))) > 701:
+        # Platform detection.  This tested the MAXIMUM read length, so a single long
+        # read in an Illumina library rerouted the whole sample to minimap2 and
+        # bcftools AND added +100 to every QUAL, which made those values
+        # incomparable to the 150/300 thresholds used downstream.
+        #
+        # Average length is the right statistic - Illumina 2x300 averages ~300, ONT
+        # well over 1000 - and the presence of an R2 file settles it outright,
+        # because paired-end reads mean Illumina whatever the lengths look like.
+        if self.nanopore:
             nanopore = True
-        elif self.nanopore:
-            nanopore = True
+            platform_reason = 'requested with --nanopore'
         else:
-            nanopore = False
-            
+            avg_len = float(str(fastq_stats.R1.avg_len).replace(',', ''))
+            if self.FASTQ_R2:
+                nanopore = False
+                platform_reason = (f'paired-end reads present, average length '
+                                   f'{avg_len:.0f}')
+            elif avg_len > NANOPORE_AVG_READ_LEN_CUTOFF:
+                nanopore = True
+                platform_reason = (f'single-end with average read length '
+                                   f'{avg_len:.0f} > {NANOPORE_AVG_READ_LEN_CUTOFF}')
+            else:
+                nanopore = False
+                platform_reason = (f'single-end with average read length '
+                                   f'{avg_len:.0f} <= {NANOPORE_AVG_READ_LEN_CUTOFF}')
+        platform = 'nanopore/long-read' if nanopore else 'Illumina/short-read'
+        # Recorded because it was previously invisible, which is why the max_len
+        # behaviour went unnoticed.
+        print(f'\tPlatform: {platform} ({platform_reason})')
+        self.excel_stats.excel_dict['Platform'] = f'{platform} ({platform_reason})'
+
+
         alignment = Alignment(SAMPLE_NAME=self.sample_name, FASTQ_R1=self.FASTQ_R1, FASTQ_R2=self.FASTQ_R2, reference=self.reference, nanopore=nanopore, gbk=self.gbk, assemble_unmap=self.assemble_unmap, debug=self.debug)
         alignment.run()
 
-        # Group reporting
-        groups = "group file not provided"
-        if self.reference_type:
+        # Group reporting.  Three outcomes, previously collapsed into two: a
+        # failed lookup was reported as "group file not provided", which reads as
+        # a configuration choice rather than an error.
+        if not self.reference_type:
+            groups = "group file not provided"
+        else:
             try:
                 group_reporter = GroupReporter(alignment.zero_coverage_vcf_file_path, self.reference_type)
                 groups = ", ".join(group_reporter.get_groups())
-                self.excel_stats.excel_dict['Groups'] = groups
-            except ValueError:
-                self.excel_stats.excel_dict['Groups'] = groups
-        else:
-            self.excel_stats.excel_dict['Groups'] = groups
+            except (GroupLookupError, ValueError, KeyError, OSError) as e:
+                groups = f"group lookup FAILED: {e}"
+                print(f'\n### {groups}\n')
+        self.excel_stats.excel_dict['Groups'] = groups
 
-        alignment.latex(self.latex_report.tex, groups)
         alignment.excel(self.excel_stats.excel_dict)
 
         # FASTQ usability assessment
@@ -205,6 +258,7 @@ class vSNP3_Step1(Setup):
             color_quality = bcolors.GREEN
         
         print(f'{bcolors.WHITE}{self.fastq_name}{bcolors.ENDC} {color_quality}{fastq_usability}{bcolors.ENDC} FASTQ Usability')
+        self.excel_stats.excel_dict['FASTQ Usability'] = fastq_usability
 
         # Reference usability assessment
         if alignment.zero_coverage.genome_coverage < 0.95 or alignment.zero_coverage.percent_ref_with_zero_coverage > 1.0 or alignment.zero_coverage.percent_ref_with_good_snp_count > 0.09:
@@ -221,11 +275,16 @@ class vSNP3_Step1(Setup):
             reference_usability_test = True
         
         print(f'{bcolors.WHITE}{self.fastq_name}{bcolors.ENDC} {color_quality}{reference_usability}{bcolors.ENDC} Reference Usability')
+        self.excel_stats.excel_dict['Reference Usability'] = reference_usability
         
         # Store alignment results for reporting
         self.programs = alignment.programs
         self.alignment_vcf_run_summary = alignment.alignment_vcf_run_summary
-        self.latex_report.latex_ending()
+        if str(groups).startswith('group lookup FAILED'):
+            self.report.add_notice(groups)
+        self.report.program_versions = "\n".join(
+            list(self.programs or []) + list(self.alignment_vcf_run_summary or []))
+        self.write_report()
         self.excel_stats.post_excel()
 
         # Clean up copied gbk files if they exist
@@ -355,10 +414,10 @@ def get_program_versions():
     Get version information for all required programs and dependencies
     """
     program_list = [
-        'bcftools', 'biopython', 'bwa', 'minimap2', 'cairosvg', 
+        'bcftools', 'biopython', 'bwa', 'minimap2',
         'dask', 'freebayes', 'humanize', 'numpy', 'pandas', 'openpyxl', 
         'xlsxwriter', 'parallel', 'pigz', 'regex', 'samtools', 'seqkit', 
-        'sourmash', 'spades', 'svgwrite', 'py-cpuinfo'
+        'sourmash', 'spades', 'py-cpuinfo', 'jinja2', 'weasyprint'
     ]
 
     # Dictionary for module name mapping (conda/pip name to import name)
@@ -370,52 +429,47 @@ def get_program_versions():
         'xlsxwriter': 'xlsxwriter',
         'regex': 're',
         'py-cpuinfo': 'cpuinfo',
-        'cairosvg': 'cairosvg',
         'dask': 'dask',
         'humanize': 'humanize',
-        'svgwrite': 'svgwrite'
+        'jinja2': 'jinja2',
+        'weasyprint': 'weasyprint',
     }
 
     # List to store program versions
     python_programs = []
 
-    # Get Python version with source info
-    python_source = "(system)"
+    # One `conda list --json` for the whole environment, rather than one
+    # `conda list <pkg>` per package.  Each of those calls took ~0.42 s and there
+    # were 22 of them -- 9.3 s of pure overhead per sample, or roughly 74 minutes
+    # across a 500-sample run -- to obtain information a single call already holds.
+    conda_versions = {}
     try:
-        conda_output = subprocess.check_output(["conda", "list", "python"], 
-                                            stderr=subprocess.STDOUT, 
-                                            universal_newlines=True)
-        if "python" in conda_output:
-            python_source = "(conda)"
-    except:
+        conda_json = subprocess.check_output(
+            ["conda", "list", "--json"], stderr=subprocess.DEVNULL,
+            universal_newlines=True, timeout=120)
+        for entry in json.loads(conda_json):
+            name = entry.get('name')
+            if name:
+                conda_versions[name.lower()] = entry.get('version', 'nd')
+    except (subprocess.SubprocessError, OSError, ValueError):
+        # Not in a conda environment, or conda is unavailable.  The per-program
+        # fallbacks below still report versions.
         pass
+
+    python_source = "(conda)" if 'python' in conda_versions else "(system)"
     python_programs.append(f'Python, {sys.version.split()[0]} {python_source}')
 
     # Check all programs
     for program in program_list:
         version = "nd"  # Default to "nd" (no data)
         source = ""
-        
+
         # First try conda
-        try:
-            conda_output = subprocess.check_output(["conda", "list", program], 
-                                                stderr=subprocess.STDOUT, 
-                                                universal_newlines=True)
-            # Extract version from conda output
-            lines = conda_output.strip().split('\n')
-            for line in lines:
-                if program in line and not line.startswith('#'):
-                    parts = line.split()
-                    if len(parts) >= 2:
-                        version = parts[1]  # Version is typically the second column
-                        source = "(conda)"
-                        break
-            # If we found the version in conda, add it to our list and continue to next program
-            if version != "nd":
-                python_programs.append(f'{program}, {version} {source}')
-                continue
-        except:
-            pass
+        if program.lower() in conda_versions:
+            version = conda_versions[program.lower()]
+            source = "(conda)"
+            python_programs.append(f'{program}, {version} {source}')
+            continue
         
         # If not found in conda, check Python modules
         if program in module_mapping:
@@ -523,10 +577,11 @@ def write_run_log(sample_name, args, alignment_vcf_run_summary, programs):
             programs_already_reported = [item.split(',')[0].lower() for item in python_programs]
             
             for each in programs:
-                # Skip error messages about local variables
-                if each.startswith("Error getting program versions: cannot access local variable"):
-                    continue
-                    
+                # The filter that used to live here suppressed
+                # "Error getting program versions: cannot access local variable",
+                # which was a real UnboundLocalError in vsnp3_alignment_vcf.py on
+                # every run that did not use --assemble_unmap.  The cause is fixed,
+                # so a message like that now means something and is not hidden.
                 program_name = each.split(':')[0].strip() if ':' in each else each.split()[0].strip()
                 if program_name.lower() not in programs_already_reported:
                     print(each, file=run_log)
@@ -558,8 +613,8 @@ def cleanup_temp_files(debug=False):
         os.makedirs(temp_dir)
         
     files_grab = []
-    for files in ('*_report.out', '*.aux', '*.log', '*tex', '*png', "*_seqkit_stats.txt"):
-        files_grab.extend(glob.glob(files))
+    for files in ('*_report.out', '*.log', "*_seqkit_stats.txt"):
+        files_grab.extend(sorted(glob.glob(files)))
     
     for each in files_grab:
         try:
@@ -710,7 +765,7 @@ if __name__ == "__main__": # execute if directly accessed by the interpreter
             reference_type=args.reference_type, 
             nanopore=args.nanopore, 
             assemble_unmap=args.assemble_unmap, 
-            spoligo=args.spoligo, 
+            spoligo=args.spoligo,
             debug=args.debug
         )
         vsnp.run()

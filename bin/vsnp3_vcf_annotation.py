@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.35"
+from vsnp3_version import __version__
 
 import os
 import re
@@ -9,6 +9,19 @@ import textwrap
 import pandas as pd
 
 from vsnp3_annotation import Annotation
+
+
+def _id_safe(value):
+    """
+    The annotation string is written into the VCF ID column as ';'-joined key=value
+    pairs.  Product names in the shipped references contain ';' (18 occurrences) and
+    '=' (6), which split into spurious fields or break key=value parsers downstream.
+    Replace the structural characters rather than emitting a malformed record.
+    """
+    text = str(value)
+    for char, replacement in ((';', ','), ('=', '-'), ('\t', ' '), ('\n', ' ')):
+        text = text.replace(char, replacement)
+    return text
 
 
 class VCF_Annotation():
@@ -50,8 +63,9 @@ class VCF_Annotation():
                 annotation_parts = [
                     f'cds_nt_start={getattr(annotation, "cds_nt_start", "")}',
                     f'cds_nt_end={getattr(annotation, "cds_nt_end", "")}',
-                    f'gene={getattr(annotation, "gene", "")}',
-                    f'product={getattr(annotation, "product", "")}',
+                    f'gene={_id_safe(getattr(annotation, "gene", ""))}',
+                    f'product={_id_safe(getattr(annotation, "product", ""))}',
+                    f'feature_type={getattr(annotation, "feature_type", "")}',
                     f'aa_residue_pos={getattr(annotation, "aa_residue_pos", "")}',
                     f'snp_nt={getattr(annotation, "snp_nt", "")}',
                     f'aa_pos={getattr(annotation, "aa_pos", "")}',
@@ -59,7 +73,13 @@ class VCF_Annotation():
                     f'snp_base_code={getattr(annotation, "snp_base_code", "")}',
                     f'ref_aa={getattr(annotation, "ref_aa", "")}',
                     f'snp_aa={getattr(annotation, "snp_aa", "")}',
-                    f'mutation_type={getattr(annotation, "mutation_type", "")}'
+                    f'mutation_type={_id_safe(getattr(annotation, "mutation_type", ""))}',
+                    f'hgvs_c={getattr(annotation, "hgvs_c", "n/a")}',
+                    f'hgvs_p={getattr(annotation, "hgvs_p", "n/a")}',
+                    f'overlapping_features={getattr(annotation, "overlapping_features", 0)}',
+                    f'overlapping_genes={_id_safe(getattr(annotation, "overlapping_genes", "n/a"))}',
+                    f'cds_overlap={_id_safe(getattr(annotation, "cds_overlap", "n/a"))}',
+                    f'all_consequences={_id_safe(getattr(annotation, "all_consequences", "n/a"))}'
                 ]
                 
                 annotation_string = ';'.join(annotation_parts)
@@ -73,6 +93,7 @@ class VCF_Annotation():
                     'cds_nt_end=',
                     'gene=',
                     'product=',
+                    'feature_type=',
                     'aa_residue_pos=',
                     'snp_nt=',
                     'aa_pos=',
@@ -80,7 +101,13 @@ class VCF_Annotation():
                     'snp_base_code=',
                     'ref_aa=',
                     'snp_aa=',
-                    'mutation_type='
+                    'mutation_type=',
+                    'hgvs_c=',
+                    'hgvs_p=',
+                    'overlapping_features=',
+                    'overlapping_genes=',
+                    'cds_overlap=',
+                    'all_consequences='
                 ]
                 annotation_dict[row['ABS_POS']] = ';'.join(empty_parts)
         

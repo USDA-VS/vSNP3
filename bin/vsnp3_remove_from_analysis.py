@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.35"
+from vsnp3_version import __version__
 
 import os
 import sys
@@ -38,7 +38,7 @@ class Remove_From_Analysis:
         else:
             print('##### PROVIDE A FULL PATH')
             print(f'directory given: "{working_directory}"')
-            sys.exit(0)
+            sys.exit(1)
 
         # Validate Excel file exists
         if not os.path.isfile(excel_remove):
@@ -92,7 +92,7 @@ class Remove_From_Analysis:
             try:
                 # Escape special characters in the path for glob
                 escaped_sample = each_sample.replace('[', r'\[').replace(']', r'\]')
-                glob_list = glob.glob(escaped_sample)
+                glob_list = sorted(glob.glob(escaped_sample))
                 
                 if not glob_list:
                     files_not_found.append(each_sample)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-__version__ = "3.35"
+from vsnp3_version import __version__
 
 import os
 import sys
@@ -15,8 +15,6 @@ from Bio import SeqIO
 
 from vsnp3_file_setup import Setup
 from vsnp3_file_setup import bcolors
-from vsnp3_file_setup import Banner
-from vsnp3_file_setup import Latex_Report
 from vsnp3_file_setup import Excel_Stats
 
 from vsnp3_fastq_stats_seqkit import FASTQ_Stats
@@ -58,7 +56,7 @@ class Assemble(Setup):
                 subprocess.run(["spades.py", "--iontorrent", "-s", FASTQ_list[0], "-o", "spades_assembly", "--careful"], capture_output=True, check=False)
             else:
                 print(f'\n### Must have either single or paired read set.\n')
-                sys.exit(0)
+                sys.exit(1)
         except Exception as e:
             print(f"\n### Error running SPAdes: {str(e)}\n")
             sys.exit(1)
@@ -178,7 +176,10 @@ class Assemble(Setup):
         else:
             csumn2 = min(csum[csum >= n2])
             ind = np.where(csum == csumn2)
-            self.n50 = all_len[int(ind[0])] # n50 smallest size contig which, along with the larger contigs, contain half of sequence of a particular genome
+            # int() on ind[0] itself is a 1-D array conversion: a DeprecationWarning
+            # up to numpy 2.2 and a TypeError from 2.4 on.  Index to the scalar first,
+            # the way the l50 line below already does.
+            self.n50 = all_len[int(ind[0][0])] # n50 smallest size contig which, along with the larger contigs, contain half of sequence of a particular genome
             self.l50 = int(ind[0][0]) + 1 # l50 smallest number of contigs whose length sum makes up half of genome
             
         self.greater_one_kb_count = len(greater_one_kb)
@@ -197,32 +198,6 @@ class Assemble(Setup):
               f'            N50: {bcolors.PURPLE}{self.n50:,}{bcolors.ENDC}, \n'
               f'            {self.coverage_title}: {bcolors.YELLOW}{self.mean_coverage:,.1f}X{bcolors.ENDC}\n')
     
-    def latex(self, tex, groups=None):
-        blast_banner = Banner("Assembly")
-        # Define LaTeX newline constant to avoid raw string in f-string
-        latex_newline = r"\\"
-        
-        print(r'\begin{table}[ht!]', file=tex)
-        print(r'\begin{adjustbox}{width=1\textwidth}', file=tex)
-        print(r'\begin{center}', file=tex)
-        print(r'\includegraphics[scale=1]{' + blast_banner.banner + '}', file=tex)
-        print(r'\end{center}', file=tex)
-        print(r'\end{adjustbox}', file=tex)
-        print(r'\begin{adjustbox}{width=1\textwidth}', file=tex)
-        print(r'\begin{tabular}{ l | l | l | l | l | l }', file=tex)
-        # Fixed raw string in f-string by defining constant
-        print(f'Contig count & Contig length counts $<$ | 301-999bp | $>$ & Longest contig & Total length & N50 & {self.coverage_title} {latex_newline}', file=tex)
-        print(r'\hline', file=tex)
-        # Fixed raw string in f-string by using constant
-        print(f'{self.contig_count:,} & {self.small_contigs_count:,} | {self.mid_size:,} | {self.greater_one_kb_count:,} & {self.longest_contig:,} & {self.total_contig_lengths:,} & {self.n50:,} & {self.mean_coverage:,.1f}X {latex_newline}', file=tex)
-        print(r'\hline', file=tex)
-        print(r'\end{adjustbox}', file=tex)
-        print(r'\vspace{0.1 mm}', file=tex)
-        print(r'\end{tabular}', file=tex)
-        print(r'\\', file=tex)
-        # print(r'\begin{flushleft}Results provided by: \href{https://blast.ncbi.nlm.nih.gov/Blast.cgi}{BLAST}\end{flushleft}', file=tex)
-        print(r'\end{table}', file=tex)
-
     def excel(self, excel_dict):
         excel_dict['Contig count'] = f'{self.contig_count:,}'
         excel_dict['Contig length counts <|301-999bp|>'] = f'{self.small_contigs_count:,}|{self.mid_size:,}|{self.greater_one_kb_count:,}'
@@ -248,7 +223,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     If just stats is needed:
     vsnp3_assembly.py -f *fasta
 
-    Output:  pdf report and excel stat summary
+    Output:  excel stat summary
 
     '''), epilog='''---------------------------------------------------------''')
     parser.add_argument('-r1', '--read1', action='store', dest='FASTQ_R1', required=False, default=None, help='Required: single read, R1 when Illumina read')
@@ -280,11 +255,6 @@ if __name__ == "__main__": # execute if directly access by the interpreter
         print('### Error: Provide FASTQ or FASTA file.  See vsnp3_assembly.py -h for option')
         sys.exit(1)
 
-    #Latex report
-    latex_report = Latex_Report(assemble.sample_name)
-    assemble.latex(latex_report.tex)
-    latex_report.latex_ending()
-
     #Excel Stats
     excel_stats = Excel_Stats(assemble.sample_name)
     assemble.excel(excel_stats.excel_dict)
@@ -294,8 +264,8 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     if not os.path.exists(temp_dir):
         os.makedirs(temp_dir)
     files_grab = []
-    for files in ('*.aux', '*.log', '*tex', '*png', '*out'):
-        files_grab.extend(glob.glob(files))
+    for files in ('*.log', '*out'):
+        files_grab.extend(sorted(glob.glob(files)))
     for each in files_grab:
         shutil.move(each, temp_dir)
 

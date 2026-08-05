@@ -1,27 +1,33 @@
 #!/usr/bin/env python
 
-__version__ = "3.35"
+from vsnp3_version import __version__
 
 import os
 import io
-import sys
 import pandas as pd
 import argparse
 import textwrap
 
+from vsnp3_version import (AC_HETEROZYGOUS, AC_HOMOZYGOUS, MQ_THRESHOLD,
+                             QUAL_THRESHOLD)
 from vsnp3_reference_options import Ref_Options
+
+
+class GroupLookupError(RuntimeError):
+    '''Group assignment could not be carried out.  Distinct from "no group file".'''
 
 
 class GroupReporter:
 
     def __init__(self, vcf, reference_type=None):
-        if reference_type and vcf:
-            reference_options = Ref_Options(reference_type)
-            self.vcf = vcf
-        else:
-            print('VCF file and reference option must be provided')
-            sys.exit(0)
-                
+        # raise rather than sys.exit: this class is imported by vsnp3_step1.py, and
+        # exiting here killed the whole sample run from inside a helper.
+        if not (reference_type and vcf):
+            raise GroupLookupError('VCF file and reference option must be provided')
+        reference_options = Ref_Options(reference_type)
+        self.vcf = vcf
+        self.error = None
+
         excel_path = reference_options.defining_snps
         xl = pd.ExcelFile(excel_path)
         sheet_names = xl.sheet_names
@@ -88,40 +94,49 @@ class GroupReporter:
 
         return df
 
-    def find_initial_positions(self, filename):
+    def find_initial_positions(self, filename, qual_threshold=QUAL_THRESHOLD,
+                               mq_threshold=MQ_THRESHOLD):
+        '''
+        Positions in this VCF that could serve as defining SNPs.
+
+        Returns a 3-tuple on every path.  Both error paths used to return a
+        4-tuple, and get_groups() unpacks 3, so any parse problem raised
+        ValueError -- which vsnp3_step1.py caught and reported as "group file not
+        provided", making a real failure indistinguishable from no group file
+        being configured.  The reason is recorded on self.error instead.
+        '''
         found_positions = {}
         found_positions_mix = {}
-        # Values must be hardcoded.  This is used in step1 where options are not used.  Defining SNPs should be of relatively high quality.
-        AC = 2
-        qual_threshold = 150
-        MQ = 56
+        self.error = None
         try:
             df = self.read_vcf(filename)
+        except (SyntaxError, AttributeError, ValueError, KeyError, OSError,
+                pd.errors.ParserError, pd.errors.EmptyDataError) as e:
+            # This used to os.remove(filename).  filename is the sample's _zc.vcf,
+            # which is step1's primary deliverable; a reporter must not delete its
+            # caller's input, least of all on a parse error it then hides.
+            self.error = f'{type(e).__name__}: {e}'
+            return filename, found_positions, found_positions_mix
+
+        for index, record in df.iterrows():
             try:
-                for index, record in df.iterrows():
-                    try:
-                        record_qual = int(record.QUAL)
-                    except (TypeError, ValueError):
-                        record_qual = 0 
-                    chrom = record.CHROM
-                    position = record.POS
-                    absolute_position = f"{chrom}:{position}"
-                    try:
-                        # Safely access ALT column with proper checks
-                        alt_value = record.ALT
-                        if pd.notna(alt_value) and str(alt_value) != "None" and alt_value != "." and record.AC == AC and len(str(record.REF)) == 1 and record_qual > qual_threshold and record.MQ > MQ:
-                            found_positions[absolute_position] = record.REF
-                        if pd.notna(alt_value) and str(alt_value) != "None" and alt_value != "." and record.AC == 1 and len(str(record.REF)) == 1 and record_qual > qual_threshold and record.MQ > MQ:
-                            found_positions_mix[absolute_position] = record.REF
-                    except (KeyError, AttributeError, TypeError):
-                        pass
-                return filename, found_positions, found_positions_mix
-            except (ZeroDivisionError, ValueError, UnboundLocalError, TypeError) as e:
-                return filename, 'see error', {}, {}
-        except (SyntaxError, AttributeError) as e:
-            # print(type(e)(str(e) + f'\n### VCF SyntaxError {filename} File Removed'))
-            os.remove(filename)
-            return filename, 'see error', {}, {}
+                record_qual = int(record.QUAL)
+            except (TypeError, ValueError):
+                record_qual = 0
+            absolute_position = f"{record.CHROM}:{record.POS}"
+            try:
+                # Safely access ALT column with proper checks
+                alt_value = record.ALT
+                called = (pd.notna(alt_value) and str(alt_value) != "None"
+                          and alt_value != "." and len(str(record.REF)) == 1
+                          and record_qual > qual_threshold and record.MQ > mq_threshold)
+                if called and record.AC == AC_HOMOZYGOUS:
+                    found_positions[absolute_position] = record.REF
+                if called and record.AC == AC_HETEROZYGOUS:
+                    found_positions_mix[absolute_position] = record.REF
+            except (KeyError, AttributeError, TypeError):
+                continue
+        return filename, found_positions, found_positions_mix
     
     def bin_and_html_table(self, filename, found_positions, found_positions_mix):
         sample_groups_list = []
@@ -228,6 +243,12 @@ class GroupReporter:
 
     def get_groups(self):
         filename, found_positions, found_positions_mix = self.find_initial_positions(self.vcf)
+        if self.error:
+            # Surfaced rather than swallowed: step1 previously reported this as
+            # "group file not provided", which reads as a configuration choice.
+            raise GroupLookupError(
+                f'{os.path.basename(filename)} could not be read for group '
+                f'assignment: {self.error}')
         sample_groups_list = self.bin_and_html_table(filename, found_positions, found_positions_mix)
         return sample_groups_list
 

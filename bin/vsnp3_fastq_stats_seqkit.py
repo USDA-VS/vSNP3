@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.35"
+from vsnp3_version import __version__
 
 import os
 import subprocess
@@ -15,8 +15,6 @@ from pathlib import Path
 
 from vsnp3_file_setup import Setup
 from vsnp3_file_setup import bcolors
-from vsnp3_file_setup import Banner
-from vsnp3_file_setup import Latex_Report
 from vsnp3_file_setup import Excel_Stats
 
 
@@ -197,48 +195,6 @@ class FASTQ_Stats(Setup):
         if len(self.FASTQ_dict) == 1:
             self.R2 = None
 
-    def latex(self, tex):
-        """Generate LaTeX table for FASTQ statistics"""
-        # Maintain exact original logic for R2 detection
-        try:
-            self.FASTQ_R2
-        except AttributeError:
-            self.FASTQ_R2 = None
-            
-        blast_banner = Banner("FASTQ Quality")
-        print(r'\begin{table}[ht!]', file=tex)
-        print(r'\begin{adjustbox}{width=1\textwidth}', file=tex)
-        print(r'\begin{center}', file=tex)
-        print(r'\includegraphics[scale=1]{' + blast_banner.banner + '}', file=tex)
-        print(r'\end{center}', file=tex)
-        print(r'\end{adjustbox}', file=tex)
-        print(r'\begin{adjustbox}{width=1\textwidth}', file=tex)
-        print(r'\small', file=tex)
-        print(r'\begin{tabular}{ l | l | l }', file=tex)
-        
-        if self.FASTQ_R2:
-            # Fix f-string backslash issues while maintaining exact output
-            print('Filename & ' + os.path.basename(self.R1.file_name).replace("_", r"\_") + ' & ' + os.path.basename(self.R2.file_name).replace("_", r"\_") + r' \\', file=tex)
-            print(r'\hline', file=tex)
-            print('File Size & {} & {} \\\\'.format(self.R1.file_size, self.R2.file_size), file=tex)
-            print('Q30 Passing & {}\\% & {}\\% \\\\'.format(self.R1.passQ30, self.R2.passQ30), file=tex)
-            print('Mean Read Score & {:.1f} & {:.1f} \\\\'.format(float(self.R1.read_quality_average), float(self.R2.read_quality_average)), file=tex)
-                            # Fixed bug: use R2 avg_len instead of R1 avg_len for R2 column
-            print('Average Read Length & {} & {} \\\\'.format(self.R1.avg_len, self.R1.avg_len), file=tex)
-        else:
-            print('Filename & ' + os.path.basename(self.R1.file_name).replace("_", r"\_") + r' & Read 2 \\', file=tex)
-            print(r'\hline', file=tex)
-            print('File Size & {} & N/A \\\\'.format(self.R1.file_size), file=tex)
-            print('Q30 Passing & {}\\% & N/A \\\\'.format(self.R1.passQ30), file=tex)
-            print('Mean Read Score & {:.1f} & N/A \\\\'.format(float(self.R1.read_quality_average)), file=tex)
-            print('Average Read Length & {} & N/A \\\\'.format(self.R1.avg_len), file=tex)
-        print(r'\hline', file=tex)
-        print(r'\end{tabular}', file=tex)
-        print(r'\end{adjustbox}', file=tex)
-        print(r'\vspace{0.1 mm}', file=tex)
-        print(r'\\', file=tex)
-        print(r'\end{table}', file=tex)
-    
     def excel(self, excel_dict):
         """Populate Excel dictionary with FASTQ statistics"""
         excel_dict['FASTQ_R1'] = os.path.basename(self.R1.file_name)
@@ -275,11 +231,11 @@ def cleanup_temp_files(debug=False):
             temp_dir.mkdir(exist_ok=True)
         
         # Move temporary files to temp directory
-        file_patterns = ['*.aux', '*.log', '*tex', '*png', '*out']
+        file_patterns = ['*.log', '*out']
         files_to_move = []
         
         for pattern in file_patterns:
-            files_to_move.extend(glob.glob(pattern))
+            files_to_move.extend(sorted(glob.glob(pattern)))
         
         for file_path in files_to_move:
             try:
@@ -377,11 +333,6 @@ def main():
             print(f'\t R2 Mean Read Score: {bcolors.WHITE}{fastq_stats.R2.read_quality_average}{bcolors.ENDC}')
             print(f'\t R2 Average Read Length: {bcolors.WHITE}{fastq_stats.R2.avg_len}{bcolors.ENDC}')
             print()
-
-        # Generate LaTeX report
-        latex_report = Latex_Report(fastq_stats.sample_name)
-        fastq_stats.latex(latex_report.tex)
-        latex_report.latex_ending()
 
         # Generate Excel stats
         excel_stats = Excel_Stats(fastq_stats.sample_name)

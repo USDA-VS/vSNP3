@@ -17,7 +17,7 @@ from pathlib import Path
 
 from krona_lca_all import force_tax_number
 
-__version__ = "3.35"
+from vsnp3_version import __version__
 
 class Kraken2_Identification:
     ''' 
@@ -275,11 +275,12 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     parser.add_argument('-d', '--directory', action='store', dest='directory', required=False, default="kraken2", help='Put output to directory')
     parser.add_argument('-c', '--db_contents', action='store_true', dest='db_contents', help='Show contents of DB by printing README')
     parser.add_argument('--database', required=True, action='store', dest='database', help='Absolute path to database directory')
+    parser.add_argument('-v', '--version', action='version', version='{}: version {}'.format(os.path.basename(__file__), __version__))
     
-    try:
-        args = parser.parse_args()
-    except SystemExit:
-        sys.exit(1)
+    # parse_args() exits 0 for --help and --version and 2 for a bad argument.  This
+    # was wrapped in `except SystemExit: sys.exit(1)`, which turned a successful
+    # --help or --version into a failure exit code.
+    args = parser.parse_args()
 
     print(f'\n{os.path.basename(__file__)} SET ARGUMENTS:')
     print(args)

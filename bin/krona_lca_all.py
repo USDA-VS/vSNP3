@@ -66,7 +66,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
         Purpose:
         Force a tax number for all classified reads, "C"
 
-        Usage: krona_lca_all.py -f kraken2_output_file.tex
+        Usage: krona_lca_all.py -f kraken2_output_file.txt
         Output will be: kronaInput.txt
         Two column file will contain read header and taxid
 

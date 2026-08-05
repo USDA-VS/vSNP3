@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.35"
+from vsnp3_version import __version__
 
 import os
 import re
@@ -288,7 +288,7 @@ class Merge_Defining_SNPs():
         else:
             df2 = pd.DataFrame()  # Empty DataFrame
 
-        merged_file_name = 'merge_differences_{}_{_{}.xlsx'.format(file_sample_name1, file_sample_name2, date_stamp)
+        merged_file_name = 'merge_differences_{}_{}_{}.xlsx'.format(file_sample_name1, file_sample_name2, date_stamp)
         with pd.ExcelWriter(merged_file_name) as diff_writer:
             # Write each DataFrame to a separate sheet with a specific name
             dfall.to_excel(diff_writer, sheet_name='Defin_SNP_in_both_but_diff_pos', index=False, header=False)
@@ -298,7 +298,7 @@ class Merge_Defining_SNPs():
         dfauto = pd.DataFrame(auto_merge).transpose()
         dfauto = sort_df(dfauto)
 
-        merged_auto = 'merge_auto_{}_{_{}.xlsx'.format(file_sample_name1, file_sample_name2, date_stamp)
+        merged_auto = 'merge_auto_{}_{}_{}.xlsx'.format(file_sample_name1, file_sample_name2, date_stamp)
         with pd.ExcelWriter(merged_auto, engine='openpyxl') as write_auto:
             # Write an updated defining snps Excel file with all combined from both worksheets
             dfauto.to_excel(write_auto, sheet_name='Sheet1', index=False, header=False)

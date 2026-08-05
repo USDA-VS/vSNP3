@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-__version__ = "3.35"
+from vsnp3_version import __version__
 
 import os
 import subprocess
@@ -12,8 +12,6 @@ import textwrap
 from Bio import SeqIO
 
 from vsnp3_file_setup import Setup
-from vsnp3_file_setup import Banner
-from vsnp3_file_setup import Latex_Report
 from vsnp3_file_setup import Excel_Stats
 
 
@@ -62,7 +60,7 @@ class Best_Reference(Setup):
         # Collect all reference options from the specified paths
         for path in dependency_paths:
             if os.path.exists(path):
-                ref_options = glob.glob(os.path.join(path, '*'))
+                ref_options = sorted(glob.glob(os.path.join(path, '*')))
                 all_ref_options = all_ref_options + ref_options
             else:
                 print(f"Warning: Reference path does not exist: {path}")
@@ -73,7 +71,7 @@ class Best_Reference(Setup):
         # Get FASTA files from each reference directory
         self.fasta_list = []
         for each_path in all_ref_options:
-            self.fasta_list.extend(glob.glob(os.path.join(each_path, '*.fasta')))
+            self.fasta_list.extend(sorted(glob.glob(os.path.join(each_path, '*.fasta'))))
             
         # Create dictionary mapping FASTA headers to file paths
         header_dict = {}
@@ -230,39 +228,27 @@ class Best_Reference(Setup):
             
         print("#############\n")
         
-    def latex(self, tex):
-        blast_banner = Banner("Sourmash Sequence Similarity")
-        print(r'\begin{table}[ht!]', file=tex)
-        print(r'\begin{adjustbox}{width=1\textwidth}', file=tex)
-        print(r'\begin{center}', file=tex)
-        print(r'\includegraphics[scale=1]{' + blast_banner.banner + '}', file=tex)
-        print(r'\end{center}', file=tex)
-        print(r'\end{adjustbox}', file=tex)
-        print(r'\begin{adjustbox}{width=1\textwidth}', file=tex)
-        print(r'\begin{tabular}{l|l}', file=tex)
-        print(r'Similarity & ID \\', file=tex)
-        print(r'\hline', file=tex)
-        count=0
-        
-        if not hasattr(self, 'sourmash_df') or self.sourmash_df.empty:
-            print('Sourmash - No Data Output & Sourmash - No Data Output ' + r'\\', file=tex)
-        else:
-            try:
-                for row in self.sourmash_df.itertuples():
-                    count+=1
-                    if count <= 10:
-                        percentage = f'{row[1]:.1%}'
-                        name = row[4].replace("_", r"\_") if isinstance(row[4], str) else "Invalid Name"
-                        print(percentage.replace("%", r"\%") + ' & ' + name + r' \\', file=tex)
-                        print(r'\hline', file=tex)
-            except Exception as e:
-                print(f'Sourmash - Error processing data: {str(e)} & Error {r"\\"}', file=tex)
-                print(r'\hline', file=tex)
-                
-        print(r'\end{tabular}', file=tex)
-        print(r'\end{adjustbox}', file=tex)
-        print(r'\\', file=tex)
-        print(r'\end{table}', file=tex)
+    def similarity_rows(self, limit=10):
+        '''
+        The top sourmash matches as (similarity, name) pairs, for the report.
+
+        Columns are looked up by name.  The previous version read them
+        positionally off itertuples, which silently reports the wrong column if
+        sourmash ever reorders its CSV.
+        '''
+        rows = []
+        df = getattr(self, 'sourmash_df', None)
+        if df is None or df.empty:
+            return rows
+        try:
+            for _, row in df.head(limit).iterrows():
+                similarity = row['similarity']
+                name = row['name']
+                rows.append((f'{float(similarity):.1%}', str(name)))
+        except (KeyError, TypeError, ValueError) as e:
+            print(f'Note: could not summarize sourmash results for the report: {e}')
+            return []
+        return rows
 
     def excel(self, excel_dict):
         # Add reference set to Excel dictionary
@@ -270,7 +256,7 @@ class Best_Reference(Setup):
 
 
 if __name__ == "__main__": # execute if directly access by the interpreter
-    parser = argparse.ArgumentParser(prog='PROG', formatter_class=argparse.RawDescriptionHelpFormatter, description=textwrap.dedent('''
+    parser = argparse.ArgumentParser(prog='PROG', formatter_class=argparse.RawDescriptionHelpFormatter, description=textwrap.dedent(r'''
 
     ---------------------------------------------------------
     Usage:
@@ -306,16 +292,15 @@ if __name__ == "__main__": # execute if directly access by the interpreter
 
     NC_045512_wuhan-hu-1 checked good
 
-    # Build database
+    # Rebuilding the reference database
     for i in *fasta; do sourmash sketch dna $i --name-from-first; done
-    sourmash index ref_db.sbt.zip ./*.sig # this .zip will be placed as a dependency file, cp ref_db.sbt.zip ~/git/gitlab/dev_stuber/dependencies
+    sourmash index ref_db.sbt.zip ./*.sig   # place the .zip in the dependencies directory
     # Prepare read
     sourmash sketch dna *_R1*.fastq.gz
-    # Search 
+    # Search
     sourmash search *_R1*.fastq.gz.sig ../sourmash/ref_db.sbt.zip -o sourmash_findings.csv --threshold=0.001
 
-    # Isolates used to build 2021-08-04 database
-    # Isolates saved to /Users/tstuber/OneDrive\ -\ USDA/vSNP/vsnp3/validation/sourmash_vsnp_2021-08-04_genomes
+    # The shipped database was built 2021-08-04.
 
     # TB complex lineage information
     # Best reference will direct to either AF2122 or H37
@@ -342,11 +327,6 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     best_reference = Best_Reference(SAMPLE_NAME=args.SAMPLE_NAME, FASTQ_R1=args.FASTQ_R1, debug=args.debug)
     best_reference.run()
 
-    #Latex report
-    latex_report = Latex_Report(best_reference.sample_name)
-    best_reference.latex(latex_report.tex)
-    latex_report.latex_ending()
-
     #Excel Stats
     excel_stats = Excel_Stats(best_reference.sample_name)
     best_reference.excel(excel_stats.excel_dict)
@@ -356,8 +336,8 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     if not os.path.exists(temp_dir):
         os.makedirs(temp_dir)
     files_grab = []
-    for files in ('*.aux', '*.log', '*tex', '*png', '*out'):
-        files_grab.extend(glob.glob(files))
+    for files in ('*.log', '*out'):
+        files_grab.extend(sorted(glob.glob(files)))
     for each in files_grab:
         shutil.move(each, temp_dir)
 

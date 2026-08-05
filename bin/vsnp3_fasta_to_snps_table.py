@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 
-__version__ = "3.35"
+from vsnp3_version import __version__
 
 import os
 import subprocess
+import shutil
 import sys
 import re
 import glob
@@ -20,9 +21,37 @@ import itertools
 from Bio import SeqIO
 from collections import defaultdict
 
+import vsnp3_run
+
 # Force 'C' locale for consistent decimal point handling
 os.environ["LC_ALL"] = "C"
 locale.setlocale(locale.LC_ALL, "C")
+
+# RAxML build names, most specific first.  Order is preserved from the original
+# probe so the same binary is chosen on any given machine.
+_RAXML_CANDIDATES = ('raxml', 'raxmlHPC-PTHREADS-AVX2', 'raxmlHPC-PTHREADS-AVX',
+                     'raxmlHPC-PTHREADS', 'raxmlHPC-SSE3', 'raxmlHPC')
+_RAXML = None
+
+
+def _resolve_raxml():
+    '''
+    Name of the RAxML binary to use, resolved once per process.
+
+    This replaces a six-deep try/except chain that discovered the binary by
+    *executing* each candidate with no arguments and catching OSError.  Two
+    problems with that: it launched up to seven processes on every Tree()
+    construction -- once per group, so ~1,400 launches on a 197-group run -- and
+    the successful candidate printed its usage text to stderr, which was not
+    redirected, so RAxML usage appeared in the middle of step 2's output.
+
+    shutil.which() answers the same question from PATH without running anything.
+    '''
+    global _RAXML
+    if _RAXML is None:
+        _RAXML = next((name for name in _RAXML_CANDIDATES if shutil.which(name)),
+                      'raxmlHPC')
+    return _RAXML
 
 
 class Tree:
@@ -30,33 +59,7 @@ class Tree:
     '''
 
     def __init__(self, fasta_alignments=None, write_path=None, tree_name=None, debug=False,):
-        # Find an optimal compiled version of RAxML in conda
-        try:
-            subprocess.call("raxml", stdout=subprocess.DEVNULL)
-            raxml = "raxml"
-        except OSError:
-            try:
-                subprocess.call("raxmlHPC-PTHREADS-AVX2", stdout=subprocess.DEVNULL)
-                raxml = "raxmlHPC-PTHREADS-AVX2"
-            except OSError:
-                try:
-                    subprocess.call("raxmlHPC-PTHREADS-AVX", stdout=subprocess.DEVNULL)
-                    raxml = "raxmlHPC-PTHREADS-AVX"
-                except OSError:
-                    try:
-                        subprocess.call("raxmlHPC-PTHREADS", stdout=subprocess.DEVNULL)
-                        raxml = "raxmlHPC-PTHREADS"
-                    except OSError:
-                        try:
-                            subprocess.call("raxmlHPC-SSE3", stdout=subprocess.DEVNULL)
-                            raxml = "raxmlHPC-SSE3"
-                        except OSError:
-                            try:
-                                subprocess.call("raxmlHPC", stdout=subprocess.DEVNULL)
-                                raxml = "raxmlHPC"
-                            except OSError:
-                                raxml = 'raxmlHPC'
-            # print('set RAxML to {}'.format(raxml))
+        raxml = _resolve_raxml()
         self.raxml = raxml
         self.cpu_count = int(multiprocessing.cpu_count() / 1.2)
         # self.hash_names = hash_names
@@ -73,25 +76,37 @@ class Tree:
         self.write_path = write_path
         self.tree_name = tree_name
 
-        raxml_version = subprocess.check_output('{} -v'.format(raxml), shell=True, text=True)
-        self.raxml_version = raxml_version.split('\n')[2]
-
-        os.system('{} -s {} -n raxml -m GTRCATI -o root -w {} -p 456123 -T 4 > /dev/null 2>&1'.format(raxml, fasta_alignments, write_path)) #> /dev/null 2>&1
-        # os.system('{} -s {} -n raxml -m ASC_GTRGAMMA --asc-corr lewis  -o root -w {} -p 456123 -T 4 > /dev/null 2>&1'.format(raxml, fasta_alignments, write_path)) #> /dev/null 2>&1
         try:
-            newick = os.path.join(write_path, '{}_{}.tre'.format(tree_name, self.st))
-            os.rename(os.path.join(write_path, 'RAxML_bestTree.raxml'), newick)
-            raxml_to_remove = glob.glob(os.path.join(write_path, 'RAxML*'))
-            for each in raxml_to_remove:
-                os.remove(each)
-            try:
-                reduced_file = glob.glob(os.path.join(write_path, '*.reduced'))
-                os.remove(reduced_file[0])
-            except (FileNotFoundError, IndexError) as e:
-                pass
-        except FileNotFoundError:
-            with open(os.path.join(write_path, 'SEE_RAXML_INFO'), 'w') as message_out:
-                print('check sample numbers', file=message_out)
+            banner = subprocess.check_output([raxml, '-v'], text=True).split('\n')
+            self.raxml_version = next((line for line in banner if 'RAxML' in line),
+                                      banner[0] if banner else 'RAxML version unknown')
+        except (subprocess.CalledProcessError, OSError, IndexError) as e:
+            self.raxml_version = f'RAxML version unknown ({e})'
+
+        # Checked, and stderr kept.  This was os.system(... > /dev/null 2>&1) with the
+        # return value discarded, so the only sign of failure was a FileNotFoundError
+        # on the rename below -- which then fell through and left self.newick pointing
+        # at a path that does not exist, to fail confusingly much later inside a
+        # process pool.
+        newick = os.path.join(write_path, '{}_{}.tre'.format(tree_name, self.st))
+        vsnp3_run.run([raxml, '-s', fasta_alignments, '-n', 'raxml', '-m', 'GTRCATI',
+                       '-o', 'root', '-w', write_path, '-p', '456123', '-T', '4'])
+        best_tree = os.path.join(write_path, 'RAxML_bestTree.raxml')
+        vsnp3_run.require_output(best_tree, what='RAxML best tree')
+        os.rename(best_tree, newick)
+
+        # RAxML_info is the only account RAxML gives of what it did; it used to be
+        # deleted along with everything else, including on the failure path.
+        info = os.path.join(write_path, 'RAxML_info.raxml')
+        if os.path.exists(info):
+            if self.debug:
+                os.rename(info, os.path.join(write_path, f'RAxML_info_{tree_name}.txt'))
+            else:
+                os.remove(info)
+        for each in sorted(glob.glob(os.path.join(write_path, 'RAxML*'))):
+            os.remove(each)
+        for reduced in sorted(glob.glob(os.path.join(write_path, '*.reduced'))):
+            os.remove(reduced)
         self.newick = newick
     
     def checksum_match_to_text(self, tree):
@@ -133,8 +148,8 @@ class Tree:
             ref_series = in_df.loc['reference_seq']
             in_df = in_df.drop(['reference_seq']) #in all_vcf reference_seq needs to be removed
         except KeyError:
-            print('Check that there is a "reference_seq" nameed')
-            sys.exit(0)
+            print('Check that there is a "reference_seq" named')
+            sys.exit(1)
         # print('in_df size: {}'.format(in_df.shape))
         parsimony = in_df.loc[:, (in_df != in_df.iloc[0]).any()]
         parsimony_positions = list(parsimony)
@@ -210,7 +225,7 @@ class Tables:
             for line in tree_file:
                 line = re.sub('[:,]', '\n', line)
                 line = re.sub('[)(]', '', line)
-                line = re.sub('[0-9].*\.[0-9].*\n', '', line)
+                line = re.sub(r'[0-9].*\.[0-9].*\n', '', line)
                 line = re.sub("'", '', line)
                 line = re.sub('root\n', '', line)
         
@@ -239,28 +254,31 @@ class Tables:
         available_samples = set(fasta_df.index)
         filtered_sample_order = [sample for sample in sample_order if sample in available_samples]
         
-        # Check for missing samples
-        missing_samples = set(sample_order) - available_samples
+        # A sample in the tree that is absent from the alignment is an error, not
+        # something to guess around.  This used to substitute possible_matches[0],
+        # chosen by case-insensitive substring match -- so '19-01' matched '19-011'
+        # and the wrong isolate's SNP row was written into the table.  The near-miss
+        # diagnostic is genuinely useful for tracking down name mismatches, so it is
+        # kept; only the substitution is gone.
+        missing_samples = sorted(set(sample_order) - available_samples)
         if missing_samples:
-            print("Warning [{}]: The following samples from the tree are not found in the FASTA data: {}".format(self.table_name, missing_samples))
-            print("This may be due to Unicode character differences or name mismatches.")
-            
-            # Try to find close matches for missing samples
+            detail = []
             for missing_sample in missing_samples:
-                # Look for samples that might be close matches
-                possible_matches = []
-                for available_sample in available_samples:
-                    # Check if the missing sample is a substring of available sample or vice versa
-                    if missing_sample.lower() in available_sample.lower() or available_sample.lower() in missing_sample.lower():
-                        possible_matches.append(available_sample)
-                
-                if possible_matches:
-                    print("  [{}] Possible matches for '{}': {}".format(self.table_name, missing_sample, possible_matches))
-                    # Use the first possible match
-                    best_match = possible_matches[0]
-                    filtered_sample_order.append(best_match)
-                    print("  [{}] Using '{}' as substitute for '{}'".format(self.table_name, best_match, missing_sample))
-        
+                near = sorted(s for s in available_samples
+                              if missing_sample.lower() in s.lower()
+                              or s.lower() in missing_sample.lower())
+                detail.append(f'  {missing_sample!r}'
+                              + (f' -- similar names present: {near}' if near else
+                                 ' -- no similar name present'))
+            raise RuntimeError(
+                f'[{self.table_name}] {len(missing_samples)} sample(s) in the tree are '
+                f'not in the alignment:\n' + '\n'.join(detail)
+                + '\nThis is usually a name mismatch between the metadata file and the '
+                  'VCF file names, or a Unicode difference. Refusing to substitute a '
+                  'similarly named sample, because that would put one isolate\'s SNP '
+                  'calls on another isolate\'s row.')
+
+
         # Remove duplicates while preserving order
         seen = set()
         final_sample_order = []
@@ -287,7 +305,7 @@ class Tables:
             column = tree_order[column_header]
             # for each element in the column
             for element in column:
-                if element != column[0] and element != '-':
+                if element != column.iloc[0] and element != '-':
                     count = count + 1
             snp_per_column.append(count)
         row1 = pd.Series(snp_per_column, tree_order.columns, name="snp_per_column")
@@ -301,7 +319,7 @@ class Tables:
             # for each element in the column
             # skip the first element
             for element in column[1:]:
-                if element == column[0] or element == '-':
+                if element == column.iloc[0] or element == '-':
                     count = count + 1
                 else:
                     break
@@ -332,7 +350,7 @@ class Tables:
             column = tree_order2[column_header]
             index_list_of_ref_differences=[]
             for ind, list_item in enumerate(column[1:].to_list()):
-                if list_item != column[0] and list_item != '-':
+                if list_item != column.iloc[0] and list_item != '-':
                     index_list_of_ref_differences.append(ind)
             if index_list_of_ref_differences:  # Check if list is not empty
                 c = itertools.count()
@@ -396,8 +414,12 @@ class Tables:
             while column_count > max_size:
                 count += 1
                 chunck_end += max_size
-                df_split = df.iloc[:, chunk_start:chunck_end]
-                if 'Grouping' not in df.columns and self.show_groups:
+                df_split = df.iloc[:, chunk_start:chunck_end].copy()
+                # Test df_split, not df: 'Grouping' was inserted into df above, so
+                # this guard was always False and only the first chunk -- the one
+                # whose slice happens to include column 0 -- carried the column,
+                # while excel_formatter styled every chunk as though it did.
+                if self.show_groups and 'Grouping' not in df_split.columns:
                     df_split.insert(0, 'Grouping', new_series)
                 df_split.to_json(os.path.join(self.write_path, 'df{}.json'.format(count)), orient='split')
                 self.excel_formatter(os.path.join(self.write_path, 'df{}.json'.format(count)), 
@@ -406,8 +428,8 @@ class Tables:
                 chunk_start += max_size
                 column_count -= max_size
             count += 1
-            df_split = df.iloc[:, chunk_start:]
-            if 'Grouping' not in df.columns and self.show_groups:
+            df_split = df.iloc[:, chunk_start:].copy()
+            if self.show_groups and 'Grouping' not in df_split.columns:
                 df_split.insert(0, 'Grouping', new_series)
             df_split.to_json(os.path.join(self.write_path, 'df{}.json'.format(count)), orient='split')
             self.excel_formatter(os.path.join(self.write_path, 'df{}.json'.format(count)), 
@@ -415,7 +437,7 @@ class Tables:
             os.remove(os.path.join(self.write_path, 'df{}.json'.format(count)))
             self.multiple_excel_files = True
         else:
-            if 'Grouping' not in df.columns and self.show_groups:
+            if self.show_groups and 'Grouping' not in df.columns:
                 df.insert(0, 'Grouping', new_series)
             df.to_json(os.path.join(self.write_path, 'df.json'), orient='split')
             self.excel_formatter(os.path.join(self.write_path, 'df.json'), 
@@ -479,20 +501,22 @@ class Tables:
         # Freeze panes
         ws.freeze_panes(2, start_col)
 
-        # Set annotation row height
-        ws.set_row(rows + 1, cols + 1, formatannotation)
+        # Last column for conditional formatting: stop before coverage column, or include all SNP columns
+        if coverage_col is not None:
+            format_end_col = coverage_col - 1
+        else:
+            format_end_col = end_col
 
         # Apply quality-based formatting (excluding Average Coverage column)
-        format_end_col = coverage_col if coverage_col is not None else end_col
-        ws.conditional_format(rows - 2, start_col, rows - 1, format_end_col - 1,
+        ws.conditional_format(rows - 2, start_col, rows - 1, format_end_col,
                             {'type': 'cell', 'criteria': '<', 'value': 55, 'format': formatlowqual})
 
         # Apply reference-based formatting (excluding Average Coverage column)
         if self.show_groups:
-            ws.conditional_format(2, start_col, rows - 2, format_end_col - 1,
+            ws.conditional_format(2, start_col, rows - 2, format_end_col,
                                 {'type': 'cell', 'criteria': '==', 'value': 'C$2', 'format': formatnormal})
         else:
-            ws.conditional_format(2, start_col, rows - 2, format_end_col - 1,
+            ws.conditional_format(2, start_col, rows - 2, format_end_col,
                                 {'type': 'cell', 'criteria': '==', 'value': 'B$2', 'format': formatnormal})
 
         # Apply nucleotide-based formatting
@@ -502,9 +526,9 @@ class Tables:
             ('W', formatambigous), ('K', formatambigous), ('M', formatambigous),
             ('N', formatN), ('-', formatN)
         ]
-        
+
         for nuc, format_obj in nucleotides:
-            ws.conditional_format(2, start_col, rows - 2, format_end_col - 1,
+            ws.conditional_format(2, start_col, rows - 2, format_end_col,
                                 {'type': 'text',
                                 'criteria': 'containing',
                                 'value': nuc,
@@ -630,7 +654,7 @@ class Parsimonious:
             fasta_df = fasta_df.drop(['root']) #in all_vcf reference_seq needs to be removed
         except KeyError:
             print('Check that there is a "root" named')
-            sys.exit(0)
+            sys.exit(1)
         parsimony = fasta_df.loc[:, (fasta_df != fasta_df.iloc[0]).any()]
         parsimony_positions = list(parsimony)
         parse_df = fasta_df[parsimony_positions]

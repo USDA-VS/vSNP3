@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.35"
+from vsnp3_version import __version__
 
 import os
 import io
@@ -232,15 +232,15 @@ class Bruc_MLST:
         # Clean up temporary files
         try:
             # Use glob for more efficient file operations
-            remove_files = glob.glob('ST1-MLST*')
+            remove_files = sorted(glob.glob('ST1-MLST*'))
             for i in remove_files:
                 if os.path.exists(i):
                     os.remove(i)
-            remove_files = glob.glob('*-mlst*')
+            remove_files = sorted(glob.glob('*-mlst*'))
             for i in remove_files:
                 if os.path.exists(i):
                     os.remove(i)
-            remove_files = glob.glob('*_mlst.vcf.idx')
+            remove_files = sorted(glob.glob('*_mlst.vcf.idx'))
             for i in remove_files:
                 if os.path.exists(i):
                     os.remove(i)

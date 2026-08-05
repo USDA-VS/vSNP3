@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.35"
+from vsnp3_version import __version__
 
 import os
 import sys
@@ -9,6 +9,10 @@ import re
 import argparse
 import textwrap
 from collections import defaultdict
+
+
+class AmbiguousReferenceError(RuntimeError):
+    '''A reference directory offers more than one file for a slot that takes one.'''
 
 
 class Ref_Options():
@@ -58,7 +62,7 @@ class Ref_Options():
         #the additional dependency paths point to more reference options
         for path in dependency_paths:
             if os.path.exists(path):
-                ref_options = glob.glob(f'{path}/*')
+                ref_options = sorted(glob.glob(f'{path}/*'))
                 all_ref_options = all_ref_options + ref_options
         all_ref_options = [x for x in all_ref_options if os.path.isdir(x)] #only capture directories
         self.all_ref_options = all_ref_options
@@ -82,7 +86,7 @@ class Ref_Options():
                 reference_header_capture = defaultdict(list) # find reference by fasta headers
                 for directory in all_ref_options:
                     try:
-                        for each_fasta in glob.glob(f'{directory}/*fasta'):
+                        for each_fasta in sorted(glob.glob(f'{directory}/*fasta')):
                             with open(each_fasta, 'r') as fasta_file:
                                 for each_line in fasta_file:
                                     if each_line.startswith(">"):
@@ -99,15 +103,17 @@ class Ref_Options():
                         break
 
     def metadata_gather(self, directory):
-        defining_snps = glob.glob(f'{directory}/*xlsx')
+        defining_snps = sorted(glob.glob(f'{directory}/*xlsx'))
         defining_snps = [efile for efile in defining_snps if not re.search(r'~\$.*', efile)] #ignore opened files
         # there are 3 excel files.  only 1 excel file for variable "excel".  it must be the non-*meta* and non-*remove* file
         defining_snps = [efile for efile in defining_snps if not re.search(r'.*remove.*', efile)] # just incase it is still in directory, remove it so only one excel is found below
         defining_snps = [efile for efile in defining_snps if not re.search(r'.*meta.*', efile)]
         #check that multiple files are not found for a single variable.  Each variable must point to just one file.
         if len(defining_snps) > 1:
-            print(f'\n\n##### Exiting script: {self.select_ref} contains more than one Excel file at {directory}\n')
-            sys.exit(0)
+            raise AmbiguousReferenceError(
+                f'{self.select_ref} contains more than one defining-SNP Excel file at '
+                f'{directory}: {", ".join(os.path.basename(f) for f in defining_snps)}. '
+                f'Exactly one is required.')
         else:
             try:
                 self.defining_snps = defining_snps[0]
@@ -115,11 +121,13 @@ class Ref_Options():
                 self.defining_snps = None
                 
         # remove from analysis
-        remove = glob.glob(f'{directory}/*remove*xlsx')
+        remove = sorted(glob.glob(f'{directory}/*remove*xlsx'))
         remove = [efile for efile in remove if not re.search(r'~\$.*', efile)] #ignore opened files
         if len(remove) > 1:
-            print(f'\n\n##### Exiting script: {self.select_ref} contains more than one remove file at {directory}\n')
-            sys.exit(0)
+            raise AmbiguousReferenceError(
+                f'{self.select_ref} contains more than one remove-from-analysis file at '
+                f'{directory}: {", ".join(os.path.basename(f) for f in remove)}. '
+                f'Exactly one is required.')
         else:
             try:
                 self.remove = remove[0]
@@ -127,23 +135,25 @@ class Ref_Options():
                 self.remove = None
                 
         #metadata
-        metadata = glob.glob(f'{directory}/*meta*xlsx')
+        metadata = sorted(glob.glob(f'{directory}/*meta*xlsx'))
         metadata = [efile for efile in metadata if not re.search(r'~\$.*', efile)] #ignore opened files
         if len(metadata) > 1:
-            print(f'\n\n##### Exiting script: {self.select_ref} contains more than one metadata file at {directory}\n')
-            sys.exit(0)
+            raise AmbiguousReferenceError(
+                f'{self.select_ref} contains more than one metadata file at '
+                f'{directory}: {", ".join(os.path.basename(f) for f in metadata)}. '
+                f'Exactly one is required.')
         else:
             try:
                 self.metadata = metadata[0]
             except IndexError:
                 self.metadata = None
                 
-        self.fasta = glob.glob(f'{directory}/*fasta')
-        self.gbk = glob.glob(f'{directory}/*gbk')
+        self.fasta = sorted(glob.glob(f'{directory}/*fasta'))
+        self.gbk = sorted(glob.glob(f'{directory}/*gbk'))
 
     def files_in_directory(self):
         if hasattr(self, 'path') and self.path:
-            all_files = glob.glob(f'{self.path}/*')
+            all_files = sorted(glob.glob(f'{self.path}/*'))
             for each_file in all_files:
                 print(f'{each_file}')
             print("")

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.35"
+from vsnp3_version import __version__
 
 import os
 import sys
@@ -13,6 +13,7 @@ import locale
 import argparse
 import textwrap
 import pandas as pd
+import numpy as np
 import zipfile
 import glob
 from datetime import datetime
@@ -25,9 +26,20 @@ import multiprocessing
 # multiprocessing.set_start_method('spawn', True)
 
 import warnings
-warnings.filterwarnings('ignore')
+# Targeted, not blanket.  The previous filterwarnings('ignore') hid real defects:
+# a SettingWithCopyWarning on a write-to-a-slice in make_groupings, and pandas
+# deprecations for positional Series access that is removed in pandas 3.0.  Only
+# the known-noisy messages are suppressed so anything new is visible.
+for _msg in (r'.*invalid value encountered.*',
+             r'.*divide by zero encountered.*',
+             r'.*DataFrame is highly fragmented.*',
+             r'.*Passing a BlockManager.*'):
+    warnings.filterwarnings('ignore', message=_msg)
+warnings.filterwarnings('ignore', category=DeprecationWarning, module='openpyxl')
 
+from vsnp3_version import SYNTHESIZED_QUAL
 from vsnp3_file_setup import Setup
+from vsnp3_file_setup import redact_paths
 from vsnp3_group_on_defining_snps import Group
 from vsnp3_reference_options import Ref_Options
 from vsnp3_remove_from_analysis import Remove_From_Analysis
@@ -45,7 +57,8 @@ class VCF_to_DF():
     Enhanced VCF processing with comprehensive validation and error reporting
     '''
 
-    def __init__(self, vcf_list=None, debug=False): #write_out=False,
+    def __init__(self, vcf_list=None, debug=False, assume_gt_only_quality=False,
+                 first_sample_only=False): #write_out=False,
         '''
         Start at class call with comprehensive VCF validation
         '''
@@ -54,6 +67,14 @@ class VCF_to_DF():
         self.vcf_original_count = len(vcf_list)
         cpu_count = int(multiprocessing.cpu_count() / 1.2)
         dataframes = {}
+
+        # Normalization used to rewrite the caller's VCF files in place.  It now
+        # writes copies here and the originals are never touched.  Set before the
+        # process pool starts, because check_and_fix reads these off self.
+        self.assume_gt_only_quality = assume_gt_only_quality
+        self.first_sample_only = first_sample_only
+        self.normalized_dir = os.path.join(os.getcwd(), 'vcf_normalized')
+        os.makedirs(self.normalized_dir, exist_ok=True)
 
         # Initialize input validator for comprehensive VCF validation
         validator = InputValidator(debug=debug)
@@ -131,7 +152,9 @@ class VCF_to_DF():
                     pass
                 if df is not None:
                     dataframes[os.path.basename(vcf)] = df
-                # Note: vcf_bad_list_temp is now redundant due to pre-validation
+                # Pre-validation catches most problems, but not a VCF that is well
+                # formed and still unparseable here, so these must not be dropped.
+                self.vcf_bad_list.extend(vcf_bad_list_temp)
         else:
             print(f'Processing: Pool processing with {cpu_count} cpus...')
             # Use context manager for process pool to ensure proper cleanup
@@ -143,7 +166,7 @@ class VCF_to_DF():
                         pass
                     if df is not None:
                         dataframes[os.path.basename(vcf)] = df
-                    # Note: vcf_bad_list_temp should be minimal due to pre-validation
+                    self.vcf_bad_list.extend(vcf_bad_list_temp)
 
         self.dataframes = dataframes
         print(f'\n\nDictionary of dataframes to memory runtime: {datetime.now() - self.startTime}\n')
@@ -167,8 +190,17 @@ class VCF_to_DF():
             sep='\t'
         ).rename(columns={'#CHROM': 'CHROM'})
         df['POS'] = pd.to_numeric(df['POS'], errors='coerce').fillna(0).astype(int)
-        df['QUAL'] = pd.to_numeric(df['QUAL'], errors='coerce').fillna(0).astype(int)
-        
+        # QUAL and MQ stay nullable.  These were .fillna(0), which turned an ABSENT
+        # quality value into the assertion "quality is zero".  For QUAL that means
+        # the position falls below n_threshold and is rewritten to the REFERENCE
+        # base - so a missing measurement became a positive claim that the sample
+        # matches the reference.  A missing value is a no-call; Int64 carries that
+        # distinction through to make_groupings, which now tests for it.
+        # np.trunc keeps the truncation the previous .astype(int) performed on
+        # fractional QUAL values such as 4523.5, so numeric behaviour is unchanged;
+        # Int64 is what carries the missing value through as NA rather than 0.
+        df['QUAL'] = np.trunc(pd.to_numeric(df['QUAL'], errors='coerce')).astype('Int64')
+
         # Split the INFO column and extract the AC, DP and MQ fields
         # Updated to handle malformed data more gracefully
         def extract_info_field(info_str, field):
@@ -183,77 +215,148 @@ class VCF_to_DF():
         df['MQ'] = df['INFO'].apply(lambda x: extract_info_field(x, 'MQ'))
         df['AC'] = pd.to_numeric(df['AC'], errors='coerce').fillna(0).astype(int)
         df['DP'] = pd.to_numeric(df['DP'], errors='coerce').fillna(0).astype(int)
-        df['MQ'] = pd.to_numeric(df['MQ'], errors='coerce').fillna(0).astype(int)
+        # An absent MQ is unknown, not zero.  As zero it silently failed the
+        # MQ >= 56 filter, so those positions were dropped with no indication; and
+        # if a whole file lacked MQ every position vanished and the sample went
+        # missing from the analysis rather than being reported as unusable.
+        df['MQ'] = np.trunc(pd.to_numeric(df['MQ'], errors='coerce')).astype('Int64')
+        if df['MQ'].isna().all() and len(df):
+            raise ValueError(
+                'no MQ field in INFO on any record, so the mapping quality filter '
+                'cannot be applied. Sample excluded rather than contributing zero '
+                'positions silently. Re-call with a caller that emits MQ (or MQM).')
         df = df.drop(columns=['INFO', 'ID', 'FILTER', 'FORMAT'])
 
         return df
 
     def check_and_fix(self, vcf):
+        '''
+        Normalize a copy of vcf and parse it.  The returned path is always the
+        ORIGINAL, so the dataframe key and therefore the sample name are unchanged.
+        '''
         vcf_bad_list_temp = []
+        df = None
         try:
-            self.vcf_fix(vcf)
-            df = self.read_vcf(vcf)
+            normalized = self.vcf_fix(vcf)
+            df = self.read_vcf(normalized)
             df['abs_pos'] = df['CHROM'] + ':' + df['POS'].astype(str)
-        except RuntimeError:
-            self.vcf_fix(vcf)
-            try:
-                df = self.read_vcf(vcf)
-                df['abs_pos'] = df['CHROM'] + ':' + df['POS'].astype(str)
-            except Exception as e:
-                vcf_bad_list_temp.append(vcf)
-                try:
-                    os.remove(vcf)
-                except FileNotFoundError:
-                    pass
-                df = None
-        try:
-            if df is not None:
-                df = df.drop_duplicates(subset=['abs_pos'])
-        except AttributeError:
-            # pass if df is empty, NoneType
-            pass
+        except Exception as e:
+            # Previously the input file was deleted here.  A parse failure is a
+            # reason to exclude a sample and say why, not to destroy the evidence.
+            vcf_bad_list_temp.append(
+                f'{vcf}  could not be parsed: {type(e).__name__}: {e}')
+        if df is not None:
+            df = df.drop_duplicates(subset=['abs_pos'])
         return vcf, df, vcf_bad_list_temp
 
     def vcf_fix(self, vcf):
-        temp_file = vcf + ".temp"
-        write_out = open(temp_file, 'w') #r+ used for reading and writing to the same file
-        initial_file_time_stats = os.stat(vcf)
-        with open(vcf, 'r') as file:
+        '''
+        Write a normalized copy of vcf and return its path.  The input is opened
+        read-only; earlier versions renamed a temp file over it, which is why an
+        os.utime call was needed to hide the fact that the user's files had been
+        rewritten.
+
+        Normalization is limited to making the file parseable: freebayes MQM is
+        renamed to the VCF-standard MQ, and stray quoting that some tools emit is
+        stripped.  It deliberately no longer invents data -- see below.
+        '''
+        normalized = os.path.join(self.normalized_dir, os.path.basename(vcf))
+        try:
+            return self._write_normalized(vcf, normalized)
+        except Exception:
+            # Do not leave a half-written copy behind: it would look like a valid
+            # normalized VCF while containing only the records seen before the
+            # problem, which is the failure mode this whole stage exists to remove.
+            if os.path.exists(normalized):
+                os.remove(normalized)
+            raise
+
+    def _write_normalized(self, vcf, normalized):
+        synthesized_qual = False
+        multi_sample = False
+
+        with open(vcf, 'r') as file, open(normalized, 'w') as write_out:
             for line in file:
                 line = line.replace('\r\n', '\n')
-                if line.rstrip(): # true if not empty line'^$'
-                    line = line.rstrip()  #remove right white space
-                    line = re.sub(r';MQM=', r';MQ=', line) #Allow Freebayes MQM to be read as MQ.  MQ is VCF standard
-                    line = re.sub(r'ID=MQM,', r'ID=MQ,', line)
-                    line = re.sub('"AC=', 'AC=', line)
-                    line = re.sub('""', '"', line)
-                    line = re.sub('""', '"', line)
-                    line = re.sub('""', '"', line)
+                if not line.rstrip():
+                    continue
+                line = line.rstrip()
+                line = re.sub(r';MQM=', r';MQ=', line) #Allow Freebayes MQM to be read as MQ.  MQ is VCF standard
+                line = re.sub(r'ID=MQM,', r'ID=MQ,', line)
+                line = re.sub('"AC=', 'AC=', line)
+                line = re.sub('""', '"', line)
+                line = re.sub('""', '"', line)
+                line = re.sub('""', '"', line)
+                line = re.sub('"$', '', line)
+                line = re.sub('GQ:PL\t"', 'GQ:PL\t', line)
+                line = re.sub('^"', '', line)
+                if line.startswith('##') and line.endswith('"'):
                     line = re.sub('"$', '', line)
-                    line = re.sub('GQ:PL\t"', 'GQ:PL\t', line)
-                    line = re.sub(r'[0-9]+\tGT\t.\/.+', '999\tGT:AD:DP:GQ:PL\t1/1:0,80:80:99:2352,239,0', line)
-                    line = re.sub('^"', '', line)
-                    if line.startswith('##') and line.endswith('"'):
-                        line = re.sub('"$', '', line)
-                    if line.startswith('##'):
-                        line = line.split('\t')
-                        line = ''.join(line[0])
-                    if not line.startswith('##'):
-                        line = re.sub('"', '', line)
-                        line = re.sub(r" +", "\t", line)
-                        line = line.split('\t')
-                        line = "\t".join(line[0:10])
-                        print(line, file=write_out)
-                    else:
-                        print(line, file=write_out)
-        write_out.close()  # Explicitly close the file before renaming
-        os.rename(temp_file, vcf)
-        os.utime(vcf, times=(initial_file_time_stats.st_mtime, initial_file_time_stats.st_mtime))
+                if line.startswith('##'):
+                    print(line.split('\t')[0], file=write_out)
+                    continue
+
+                line = re.sub('"', '', line)
+                line = re.sub(r" +", "\t", line)
+                fields = line.split('\t')
+
+                if fields[0] == '#CHROM':
+                    if len(fields) > 10:
+                        multi_sample = True
+                        if not self.first_sample_only:
+                            raise ValueError(
+                                f'multi-sample VCF ({len(fields) - 9} samples: '
+                                f'{", ".join(fields[9:])}). vSNP3 expects one sample per '
+                                f'file; split with `bcftools view -s <sample>`, or pass '
+                                f'--first_sample_only to analyse {fields[9]} alone.')
+                        print(f'  {os.path.basename(vcf)}: multi-sample VCF, keeping '
+                              f'only {fields[9]}', flush=True)
+                    print("\t".join(fields[0:10]), file=write_out)
+                    continue
+
+                if self.assume_gt_only_quality and len(fields) > 9 and fields[8] == 'GT':
+                    # Records carrying only a GT have no quality data, so every
+                    # threshold downstream rejects them.  On request substitute a
+                    # QUAL and leave everything else alone.
+                    #
+                    # What this replaces: a regex that matched `<digits>\tGT\t<gt>`
+                    # and rewrote it to `999\tGT:AD:DP:GQ:PL\t1/1:...`.  Because the
+                    # digits it captured were the last numeric value in INFO rather
+                    # than QUAL, it overwrote MQ (or DP, or AC) with 999 -- passing
+                    # the MQ filter unconditionally -- and forced every genotype to
+                    # 1/1.  A 0/1 heterozygous record became AC=999 and 1/1, which
+                    # then failed both the AC==2 and AC==1 tests and vanished.
+                    fields[5] = str(SYNTHESIZED_QUAL)
+                    synthesized_qual = True
+
+                print("\t".join(fields[0:10]), file=write_out)
+
+        if synthesized_qual:
+            self._insert_header_note(
+                normalized,
+                f'##vsnp3_synthesized_quality=QUAL={SYNTHESIZED_QUAL} substituted for '
+                f'records whose FORMAT was GT only (--assume_gt_only_quality)')
+        if multi_sample:
+            self._insert_header_note(
+                normalized, '##vsnp3_first_sample_only=other samples in this VCF were dropped')
+        return normalized
+
+    @staticmethod
+    def _insert_header_note(vcf, note):
+        '''Record a normalization decision in the VCF header so it is not invisible.'''
+        with open(vcf) as f:
+            lines = f.readlines()
+        for i, line in enumerate(lines):
+            if not line.startswith('##'):
+                lines.insert(i, note + '\n')
+                break
+        with open(vcf, 'w') as f:
+            f.writelines(lines)
 
 
 class HTML_Summary():
 
-    def __init__(self, runtime=None, vcf_to_df=None, reference=None, groupings_dict=None, raxml_version=None, all_vcf_boolen=None, args=None, removed_samples=None, validation_results=None):
+    def __init__(self, runtime=None, vcf_to_df=None, reference=None, groupings_dict=None, raxml_version=None, all_vcf_boolen=None, args=None, removed_samples=None, validation_results=None, name_collisions=None, metadata_ambiguous=None):
 
         htmlfile = open(f'{global_working_dir}/vSNP_step2_summary-{global_date_stamp}.html', 'at', encoding='utf-8')
         
@@ -264,21 +367,66 @@ class HTML_Summary():
 
         print('<div style="font-size:11px; font-weight:normal;">', file=htmlfile)
         if args.metadata:
-            print(f"Metadata:  {args.metadata}<br>", file=htmlfile)
+            print(f"Metadata:  {redact_paths(str(args.metadata))}<br>", file=htmlfile)
         else:
             print("No metadata for describing samples in trees and tables<br>", file=htmlfile)
         if args.defining_snps:
-            print(f"Defining SNPs:  {args.defining_snps}<br>", file=htmlfile)
+            print(f"Defining SNPs:  {redact_paths(str(args.defining_snps))}<br>", file=htmlfile)
         else:
             print("No defining SNPs files for grouping and filtering<br>", file=htmlfile)
         if args.gbk:
             for each in args.gbk:
-                print(f"gbk:  {each}<br>", file=htmlfile)
+                print(f"gbk:  {redact_paths(str(each))}<br>", file=htmlfile)
         else:
             print("No gbk for annotation<br>", file=htmlfile)
         if args.remove_by_name:
-            print(f"Remove from analysis:  {args.remove_by_name}<br>", file=htmlfile)
+            print(f"Remove from analysis:  {redact_paths(str(args.remove_by_name))}<br>", file=htmlfile)
         print('</div><br>', file=htmlfile)
+
+        # Duplicate sample names.  The run completed on one file per name, so the
+        # reader has to be told which file that was: the tables and tree carry the
+        # name, and nothing else in the report would show that a second VCF claimed
+        # it.  Placed high in the summary rather than in a footnote, because it
+        # means a sample the user submitted is absent from the analysis.
+        if name_collisions:
+            print('<div style="font-size:11px; border:1px solid #8a5a00; '
+                  'background:#fdf3e0; color:#8a5a00; padding:6px; margin:6px 0;">',
+                  file=htmlfile)
+            print(f'<b>Duplicate sample names: {len(name_collisions)}</b><br>',
+                  file=htmlfile)
+            print('More than one VCF resolved to the same sample name, so only one '
+                  'was analysed under each. The reason is given per name below; '
+                  'correct it and rerun to include the files left out.<br>',
+                  file=htmlfile)
+            for name, info in sorted(name_collisions.items()):
+                dropped = ', '.join(redact_paths(str(d)) for d in info['dropped'])
+                print(f'&nbsp;&nbsp;<b>{name}</b>: analysed '
+                      f'{redact_paths(str(info["used"]))} &mdash; not analysed: '
+                      f'{dropped}<br>', file=htmlfile)
+                print(f'&nbsp;&nbsp;&nbsp;&nbsp;<i>because '
+                      f'{redact_paths(str(info.get("cause", "")))}</i><br>',
+                      file=htmlfile)
+            print('</div>', file=htmlfile)
+
+        # A file matching several worksheet rows keeps one name, so no count
+        # changes and nothing else in the report would show it.  Separate box from
+        # the one above: a different mistake, needing a different correction.
+        if metadata_ambiguous:
+            print('<div style="font-size:11px; border:1px solid #8a5a00; '
+                  'background:#fdf3e0; color:#8a5a00; padding:6px; margin:6px 0;">',
+                  file=htmlfile)
+            print(f'<b>Ambiguous metadata rows: {len(metadata_ambiguous)}</b><br>',
+                  file=htmlfile)
+            print('These VCF files match more than one row of the metadata '
+                  'worksheet, and those rows give different names. The first '
+                  'matching row was used; remove the duplicate rows to make the '
+                  'choice explicit.<br>', file=htmlfile)
+            for base, info in sorted(metadata_ambiguous.items()):
+                targets = ', '.join(str(t) for t in info['targets'])
+                print(f'&nbsp;&nbsp;<b>{redact_paths(str(base))}</b>: '
+                      f'"{info["key"]}" appears more than once, giving {targets} '
+                      f'&mdash; used {info["targets"][0]}<br>', file=htmlfile)
+            print('</div>', file=htmlfile)
 
         print(f'<span style="font-size:11px; font-weight:bold;">SNP calling thresholds:  REF: QUAL <u>&lt;{args.n_threshold}</u>, N: QUAL <u>{args.n_threshold}-{args.qual_threshold}</u>, ALT: QUAL <u>&gt;{args.qual_threshold}</u>, Ambigious: <u>AC=1</u>, MQ: <u>&gt;{args.mq_threshold}</u></span></h4>', file=htmlfile)
 
@@ -558,10 +706,8 @@ class HTML_Summary():
                 'regex': 're',
                 'py-cpuinfo': 'cpuinfo',
                 'plotly': 'plotly',
-                'cairosvg': 'cairosvg',
                 'dask': 'dask',
                 'humanize': 'humanize',
-                'svgwrite': 'svgwrite'
             }
             
             # Check if running in a conda environment
@@ -719,8 +865,10 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     parser.add_argument('-w', '--qual_threshold', action='store', dest='qual_threshold', default=150, required=False, help='Optional: Minimum QUAL threshold for calling a SNP')
     parser.add_argument('-x', '--n_threshold', action='store', dest='n_threshold', default=50, required=False, help='Optional: Minimum N threshold.  SNPs between this and qual_threshold are reported as N')
     parser.add_argument('-y', '--mq_threshold', action='store', dest='mq_threshold', default=56, required=False, help='Optional: At least one position per group must have this minimum MQ threshold to be called.')
-    parser.add_argument('-f', '--fix_vcfs', action='store_true', dest='fix_vcfs', help='Optional: Just fix VCF files and exit')
-    parser.add_argument('-k', '--keep_ind_vcfs', action='store_true', dest='keep_ind_vcfs', default=False, help='Optional: Keep VCF files in current working directory when VCF files in current working director are used, VCF files are always saved and zipped in "vcf_starting_files.zip".')
+    parser.add_argument('-f', '--fix_vcfs', action='store_true', dest='fix_vcfs', help='Optional: Write normalized copies of the VCF files to "vcf_normalized" and exit.  The input files are not modified.')
+    parser.add_argument('--assume_gt_only_quality', action='store_true', dest='assume_gt_only_quality', default=False, help=f'Optional: for records whose FORMAT is GT only, and which therefore carry no quality data, substitute QUAL={SYNTHESIZED_QUAL} so they are not rejected by every threshold.  Genotypes and INFO are left untouched and the substitution is recorded in the VCF header.  For assembly or consensus derived VCFs.')
+    parser.add_argument('--first_sample_only', action='store_true', dest='first_sample_only', default=False, help='Optional: accept multi-sample VCF files by analysing only their first sample.  Without this a multi-sample VCF is refused rather than silently reduced to sample one.')
+    parser.add_argument('-k', '--keep_ind_vcfs', action='store_true', dest='keep_ind_vcfs', default=False, help='Optional: keep the VCF files that were read.  By default they are deleted once archived to "vcf_starting_files.zip", since leaving them clutters the working directory.  Files outside the working directory that this run did not copy are never deleted regardless, so pointing --wd at a shared VCF database cannot empty it.')
     parser.add_argument('-a', '--all_vcf', action='store_true', dest='all_vcf', required=False, help='Optional: create table with all isolates')
     parser.add_argument('-i', '--find_new_filters', action='store_true', dest='find_new_filters', help='Optional: find new positions to apply to the filter file.  Positions must be manually added to filter file.  They are not added by running this command.  Only text files are output showing position detail. Curant before adding filters')
     parser.add_argument('-abs_pos', '--abs_pos', action='store', dest='abs_pos', required=False, help='Optional: Make a group on defining SNP.  Must be supplied with --group option.  Format as chrom in VCF, chrom:10000.')
@@ -763,7 +911,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
         cwd_test = True
         working_dir = os.getcwd()
         print(f"Using current directory: {working_dir}")
-        vcf_list = glob.glob('*vcf')
+        vcf_list = sorted(glob.glob('*vcf'))
         wd_vcf_list = vcf_list
     else:
         # Validate and process specified working directory
@@ -784,7 +932,7 @@ if __name__ == "__main__": # execute if directly access by the interpreter
 
         print(f"✅ Working directory validated: {wd}")
         vcf_pattern = os.path.join(wd, '*vcf')
-        vcf_list = glob.glob(vcf_pattern)
+        vcf_list = sorted(glob.glob(vcf_pattern))
         wd_vcf_list = vcf_list
 
     # Validate VCF file list is not empty
@@ -847,9 +995,20 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     for each_vcf in wd_vcf_list:
         shutil.copy(each_vcf, starting_files)
 
-    vcf_to_df = VCF_to_DF(vcf_list=wd_vcf_list, debug=args.debug) #write_out=args.write_out
+    vcf_to_df = VCF_to_DF(vcf_list=wd_vcf_list, debug=args.debug,
+                          assume_gt_only_quality=args.assume_gt_only_quality,
+                          first_sample_only=args.first_sample_only) #write_out=args.write_out
     if args.fix_vcfs:
+        print(f'\nNormalized copies written to {vcf_to_df.normalized_dir}')
+        print('The input VCF files were not modified.')
+        if vcf_to_df.vcf_bad_list:
+            print(f'\n{len(vcf_to_df.vcf_bad_list)} file(s) could not be normalized:')
+            for each in vcf_to_df.vcf_bad_list:
+                print(f'  {each}')
+            sys.exit(1)
         sys.exit(0)
+    if not args.debug:
+        shutil.rmtree(vcf_to_df.normalized_dir, ignore_errors=True)
 
     # Create the file to indicate the script is running
     notification_file = "step2_is_running__individual_folders_may_be_complete"   
@@ -857,13 +1016,38 @@ if __name__ == "__main__": # execute if directly access by the interpreter
         f.write("Script is still running.")
     print(f"Created file: {notification_file}")
 
-    #rm move vcfs from working directory
-    for each_vcf in wd_vcf_list:
-        try:
-            os.remove(each_vcf)
-        except FileNotFoundError:
-            # if file was previously removed such as it was empty
-            pass
+    # The VCF files that were read are archived to vcf_starting_files.zip, so
+    # leaving the loose copies behind just clutters the working directory --
+    # deleting them is the useful default.  What must never happen is deleting
+    # someone else's files: wd_vcf_list is the caller's own list unless
+    # --output_dir made copies first, which is how `vsnp3_step2.py -wd
+    # /path/to/vcf_database` used to empty a shared database.  -k/--keep_ind_vcfs
+    # existed to prevent that and was parsed but never read.
+    #
+    # So: delete by default, but only files this run owns.
+    if args.keep_ind_vcfs:
+        print(f'\n-k/--keep_ind_vcfs: leaving {len(wd_vcf_list)} VCF file(s) in place.')
+    else:
+        # Ours if we copied them ourselves, or if they sit inside the working
+        # directory the user pointed us at.
+        owned = bool(args.output_dir)
+        if not owned:
+            cwd_real = os.path.realpath(os.getcwd())
+            owned = all(os.path.realpath(v).startswith(cwd_real + os.sep)
+                        for v in wd_vcf_list)
+        if owned:
+            for each_vcf in wd_vcf_list:
+                try:
+                    os.remove(each_vcf)
+                except FileNotFoundError:
+                    # already gone, eg. it was empty and was dropped earlier
+                    pass
+        else:
+            print(f'\nThe {len(wd_vcf_list)} VCF file(s) read are outside the working '
+                  'directory and were not copied by this run, so they are left in place '
+                  'rather than deleted -- they may be a shared database. A copy is '
+                  f'archived in {os.path.basename(starting_files)}.zip. Use --output_dir '
+                  'to work on copies, or delete them yourself.')
 
     print('\nvcf_bad_list')
     for each in vcf_to_df.vcf_bad_list:
@@ -876,10 +1060,10 @@ if __name__ == "__main__": # execute if directly access by the interpreter
 
     if args.abs_pos and not args.group:
         print('\n### -abs_pos must be used with -group option\n')
-        sys.exit()
+        sys.exit(1)
     if args.group and not args.abs_pos:
         print('\n### -group must be used with -abs_pos option\n')
-        sys.exit()
+        sys.exit(1)
 
     # Prioritize explicitly provided files over reference type defaults
     # Only use reference type defaults if the specific arguments were not provided
@@ -935,11 +1119,21 @@ if __name__ == "__main__": # execute if directly access by the interpreter
     vcf_to_df.vcf_bad_list = vcf_to_df.vcf_bad_list + group.vcf_bad_list
 
     setup.print_time()
-    HTML_Summary(runtime=setup.run_time, vcf_to_df=vcf_to_df, reference=ro.select_ref, groupings_dict=group.groupings_dict, raxml_version=group.raxml_version, all_vcf_boolen=args.all_vcf, args=args, removed_samples=remove_list, validation_results=vcf_to_df.validation_results) 
+    HTML_Summary(runtime=setup.run_time, vcf_to_df=vcf_to_df, reference=ro.select_ref, groupings_dict=group.groupings_dict, raxml_version=group.raxml_version, all_vcf_boolen=args.all_vcf, args=args, removed_samples=remove_list, validation_results=vcf_to_df.validation_results, name_collisions=group.name_collisions, metadata_ambiguous=group.metadata_ambiguous) 
     
     try:
         os.remove(notification_file)
         print(f"Deleted file: {notification_file}")
     except FileNotFoundError:
         pass
+
+    # A run in which no group produced a table or tree has not succeeded, whatever
+    # it managed to write along the way.  Exiting 0 here is what let a broken
+    # install look healthy to every wrapper script and scheduler.  A run where only
+    # some groups failed still exits 0: the report names them, and the groups that
+    # completed are valid.
+    if group.group_failures and not group.raxml_version:
+        print(f'\n### No group produced a table or tree. See the {len(group.group_failures)} '
+              f'failure(s) reported above.')
+        sys.exit(1)
 # Created 2021 by Tod Stuber

@@ -6,9 +6,58 @@ import numpy as np
 import plotly.graph_objects as go
 from collections import defaultdict
 import os
+import re
 import math
 
-__version__ = "3.35"
+from vsnp3_version import __version__
+
+# Bootstrap resampling seed.  Fixed so support values are reproducible: RAxML is
+# already seeded with -p 456123, so this was the last source of run-to-run
+# variation in a published tree.  Overridable with --bootstrap_seed.
+BOOTSTRAP_SEED = 456123
+
+# SNP table columns are abs_pos strings, '<chrom>:<1-based position>'.
+POSITION_COLUMN = re.compile(r'^.+:\d+$')
+
+# Columns that sit alongside the positions and are not sequence data.
+NON_POSITION_COLUMNS = ('Average Coverage', 'Grouping')
+
+
+class NoPositionColumnsError(RuntimeError):
+    '''The SNP table yielded no position columns, so no tree can be built.'''
+
+
+def select_position_columns(df):
+    '''
+    First column (sample names) plus every position column.
+
+    This used to keep only columns starting with 'NC_'.  Any reference whose
+    contigs are not RefSeq NC_ accessions therefore yielded zero position
+    columns and a star tree reporting "Total SNPs in tree: 0" as a normal
+    result.  Nine of the shipped references are affected, among them
+    Mycobacterium_orygis (CP063804), mtbc0_v1.1 (MTBC0), LT708304,
+    para-CP033688 and four Brucella genomes on NZ_ or KN accessions.
+
+    Raises rather than returning an empty frame: a tree with no SNPs in it is
+    the plausible-looking wrong answer, which is worse than no tree.
+    '''
+    df_clean = df.copy()
+    for column in NON_POSITION_COLUMNS:
+        if column in df_clean.columns:
+            df_clean = df_clean.drop(column, axis=1)
+
+    name_column = df_clean.columns[0]
+    positions = [col for col in df_clean.columns[1:]
+                 if isinstance(col, str) and POSITION_COLUMN.match(col)]
+    if not positions:
+        offered = [str(c) for c in df_clean.columns[1:6]]
+        raise NoPositionColumnsError(
+            'no SNP position columns found in the table. Expected column names of '
+            "the form '<chrom>:<position>', for example 'NC_002945.4:1295549'; "
+            f'saw {offered}. No tree was written, because one built from zero '
+            'positions would report every sample as identical.')
+    return df_clean[[name_column] + positions]
+
 
 class Node:
     def __init__(self, name=None):
@@ -29,6 +78,9 @@ def parse_args():
     parser.add_argument('-f', '--file', required=True, help='Input Excel file containing SNP alignment')
     parser.add_argument('-o', '--output', default='phylo_tree.html', 
                        help='Output HTML file name (default: phylo_tree.html)')
+    parser.add_argument('-v', '--version', action='version', version='{}: version {}'.format(os.path.basename(__file__), __version__))
+    parser.add_argument('--bootstrap_seed', type=int, default=BOOTSTRAP_SEED,
+                        help='Seed for bootstrap resampling.  Fixed by default so support values are reproducible.')
     parser.add_argument('-b', '--bootstrap', type=int, default=100,
                        help='Number of bootstrap replicates (default: 100)')
     return parser.parse_args()
@@ -188,17 +240,18 @@ def assign_unrooted_coordinates_improved(node, angle=0, angle_span=2*math.pi, pa
                     
                     current_angle += child_span
 
-def calculate_bootstrap_support(df, n_replicates=100):
+def calculate_bootstrap_support(df, n_replicates=100, bootstrap_seed=BOOTSTRAP_SEED):
     """Calculate bootstrap support values for tree branches"""
     sequences = df.iloc[:, 1:]
     positions = sequences.columns.tolist()
-    
+
     # Store all branch configurations
     branch_configs = defaultdict(int)
-    
+    rng = np.random.default_rng(bootstrap_seed)
+
     for _ in range(n_replicates):
         # Randomly sample positions with replacement
-        bootstrap_positions = np.random.choice(positions, size=len(positions), replace=True)
+        bootstrap_positions = rng.choice(positions, size=len(positions), replace=True)
         bootstrap_df = pd.concat([df.iloc[:, 0], df[bootstrap_positions]], axis=1)
         
         # Build bootstrap tree
@@ -510,15 +563,7 @@ def build_tree(df):
 def build_tree_rectangular(df):
     """Build phylogenetic tree optimized for rectangular layout"""
     # Drop non-SNP columns
-    df_clean = df.copy()
-    
-    # Remove 'Average Coverage' column if it exists
-    if 'Average Coverage' in df_clean.columns:
-        df_clean = df_clean.drop('Average Coverage', axis=1)
-    
-    # Keep first column (names) and all NC columns
-    cols_to_keep = [df_clean.columns[0]] + [col for col in df_clean.columns if col.startswith('NC_')]
-    df_clean = df_clean[cols_to_keep]
+    df_clean = select_position_columns(df)
     
     # Get sequences
     sequences = df_clean.iloc[:, 1:]
@@ -545,18 +590,33 @@ def build_tree_rectangular(df):
             return set()
         snp_sets = [set(node.snps) for node in nodes]
         return set.intersection(*snp_sets)
-    
+
     # Build tree bottom-up based on shared SNPs
     nodes = leaf_nodes.copy()
     while len(nodes) > 1:
         max_shared = 0
         best_pair = None
-        
+
+        # One set per node per round, rather than rebuilding both operands' sets
+        # inside every pair comparison.  get_shared_snps() did set(node.snps) on
+        # each of the O(S^2) comparisons, and the whole tree is built 102 times per
+        # group (rectangular + unrooted + 100 bootstrap replicates), so this was the
+        # dominant cost of step 2 with --html_tree: 0.46 s per build at 100 samples
+        # and 3.7 s at 200, against a 900 s timeout.
+        #
+        # The sets are taken from the same node.snps at the same point in the loop,
+        # and the comparison order and the strictly-greater tie-break below are
+        # unchanged, so the tree produced is identical -- which matters because the
+        # first pair to reach a given count wins, and the byte-identical-across-runs
+        # property depends on it.
+        snp_sets = [set(node.snps) for node in nodes]
+
         for i, node1 in enumerate(nodes):
+            set1 = snp_sets[i]
             for j, node2 in enumerate(nodes[i+1:], i+1):
-                shared = get_shared_snps([node1, node2])
-                if len(shared) > max_shared:
-                    max_shared = len(shared)
+                shared_count = len(set1 & snp_sets[j])
+                if shared_count > max_shared:
+                    max_shared = shared_count
                     best_pair = (node1, node2)
         
         if not best_pair or max_shared == 0:
@@ -591,15 +651,7 @@ def build_tree_rectangular(df):
 def build_tree_unrooted(df):
     """Build phylogenetic tree optimized for unrooted layout"""
     # Drop non-SNP columns
-    df_clean = df.copy()
-    
-    # Remove 'Average Coverage' column if it exists
-    if 'Average Coverage' in df_clean.columns:
-        df_clean = df_clean.drop('Average Coverage', axis=1)
-    
-    # Keep first column (names) and all NC columns
-    cols_to_keep = [df_clean.columns[0]] + [col for col in df_clean.columns if col.startswith('NC_')]
-    df_clean = df_clean[cols_to_keep]
+    df_clean = select_position_columns(df)
     
     # Get sequences
     sequences = df_clean.iloc[:, 1:]
@@ -643,18 +695,33 @@ def build_tree_unrooted(df):
             return set()
         snp_sets = [set(node.snps) for node in nodes]
         return set.intersection(*snp_sets)
-    
+
     # Build tree bottom-up based on shared SNPs
     nodes = leaf_nodes.copy()
     while len(nodes) > 1:
         max_shared = 0
         best_pair = None
-        
+
+        # One set per node per round, rather than rebuilding both operands' sets
+        # inside every pair comparison.  get_shared_snps() did set(node.snps) on
+        # each of the O(S^2) comparisons, and the whole tree is built 102 times per
+        # group (rectangular + unrooted + 100 bootstrap replicates), so this was the
+        # dominant cost of step 2 with --html_tree: 0.46 s per build at 100 samples
+        # and 3.7 s at 200, against a 900 s timeout.
+        #
+        # The sets are taken from the same node.snps at the same point in the loop,
+        # and the comparison order and the strictly-greater tie-break below are
+        # unchanged, so the tree produced is identical -- which matters because the
+        # first pair to reach a given count wins, and the byte-identical-across-runs
+        # property depends on it.
+        snp_sets = [set(node.snps) for node in nodes]
+
         for i, node1 in enumerate(nodes):
+            set1 = snp_sets[i]
             for j, node2 in enumerate(nodes[i+1:], i+1):
-                shared = get_shared_snps([node1, node2])
-                if len(shared) > max_shared:
-                    max_shared = len(shared)
+                shared_count = len(set1 & snp_sets[j])
+                if shared_count > max_shared:
+                    max_shared = shared_count
                     best_pair = (node1, node2)
         
         if not best_pair or max_shared == 0:
@@ -686,7 +753,7 @@ def build_tree_unrooted(df):
     
     return root
 
-def create_tree_visualization(df, output_file, input_filename, sample_coverage_dict=None):
+def create_tree_visualization(df, output_file, input_filename, sample_coverage_dict=None, bootstrap_seed=BOOTSTRAP_SEED):
     """Create interactive tree visualization using plotly"""
     df_for_tree = df.copy()
     coverage_dict = {}
@@ -716,9 +783,13 @@ def create_tree_visualization(df, output_file, input_filename, sample_coverage_d
     
     bootstrap_values = defaultdict(int)
     n_replicates = 100
-    
+    # Seeded: an unseeded np.random.choice made the published support values differ
+    # on every run over identical data.  Two runs of the same 6-sample dataset gave
+    # the same clade 100% and then 98%.
+    rng = np.random.default_rng(bootstrap_seed)
+
     for _ in range(n_replicates):
-        bootstrap_positions = np.random.choice(positions, size=len(positions), replace=True)
+        bootstrap_positions = rng.choice(positions, size=len(positions), replace=True)
         bootstrap_df = pd.concat([df_for_tree.iloc[:, 0], df_for_tree[bootstrap_positions]], axis=1)
         bootstrap_root = build_bootstrap_tree(bootstrap_df)
         get_branch_configs(bootstrap_root, bootstrap_values)
@@ -1360,7 +1431,7 @@ def add_unrooted_traces_improved(fig, node, parent=None, label_offset_base=20, p
     for child in node.children:
         add_unrooted_traces_improved(fig, child, node, label_offset_base, processed_positions, sample_coverage_dict)
 
-def html_tree(file_path=None, sample_coverage_dict=None):
+def html_tree(file_path=None, sample_coverage_dict=None, bootstrap_seed=BOOTSTRAP_SEED):
     """Main function to create phylogenetic tree visualization with coverage information"""
     if file_path:
         input_file = file_path
@@ -1369,12 +1440,14 @@ def html_tree(file_path=None, sample_coverage_dict=None):
         args = parse_args()
         input_file = args.file
         n_bootstrap = args.bootstrap
-    
+        bootstrap_seed = args.bootstrap_seed
+
     try:
         df = pd.read_excel(input_file, engine='openpyxl')  # Updated to specify engine
         input_name = input_file.rsplit('.', 1)[0]
         output_file = "{input_name}_position_tree.html".format(input_name=input_name)
-        create_tree_visualization(df, output_file, input_file, sample_coverage_dict)
+        create_tree_visualization(df, output_file, input_file, sample_coverage_dict,
+                                  bootstrap_seed=bootstrap_seed)
         return 0
         
     except Exception as e:

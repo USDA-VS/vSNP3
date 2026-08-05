@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.35"
+from vsnp3_version import __version__
 
 import os
 import re
@@ -8,6 +8,7 @@ import shutil
 import locale
 import argparse
 import textwrap
+import numpy as np
 import pandas as pd
 from Bio import SeqIO
 import subprocess
@@ -15,8 +16,6 @@ import sys
 
 from vsnp3_file_setup import Setup
 from vsnp3_file_setup import bcolors
-from vsnp3_file_setup import Banner
-from vsnp3_file_setup import Latex_Report
 from vsnp3_file_setup import Excel_Stats
 
 # Force 'C' locale for consistent decimal point handling
@@ -70,59 +69,85 @@ class Zero_Coverage(Setup):
         self.print_run_time('Zero Coverage')
         self.sample_name = re.sub('[_.].*', '', bam)
         self.reference_name = re.sub('[_.].*', '', os.path.basename(FASTA))
-        coverage_dict = {}
-        
-        # Use subprocess with proper error handling
+        # Per-contig depth as numpy arrays, streamed.
+        #
+        # This replaced a version that held four whole-genome copies at once: the
+        # ~99 MB `samtools depth` stdout as one string, its 4.35 M-element
+        # splitlines() list, a {chrom-pos: depth} dict of strings, and a second
+        # {chrom-pos: 0} dict for every reference base -- then outer-merged two
+        # DataFrames on a 4.35 M string index.  Measured at 7.5 s and 1.93 GB peak
+        # for M. bovis.  At ten concurrent samples on one node that is ~19 GB, and
+        # swapping turns a modest CPU cost into unbounded wall-clock, which is the
+        # failure people actually hit on a laptop or under WSL.
+        #
+        # int32 per base is ~17 MB for the same genome.  `samtools depth -a` emits
+        # every position rather than only covered ones, so the all-zeros dict and
+        # the merge are unnecessary.
         try:
-            result = subprocess.run(['samtools', 'depth', bam], 
-                                  capture_output=True, text=True, check=True)
-            for line in result.stdout.splitlines():
-                parts = line.split('\t')
-                if len(parts) >= 3:
-                    chrom, position, depth = parts[0], parts[1], parts[2]
-                    coverage_dict[chrom + "-" + position] = depth
+            contig_lengths = {record.id: len(record.seq)
+                              for record in SeqIO.parse(FASTA, "fasta")}
+        except Exception as e:
+            print(f"Error parsing FASTA file {FASTA}: {e}")
+            raise
+        reference_length = sum(contig_lengths.values())
+
+        # Sized from the FASTA, not from what samtools reports: `depth -a` covers
+        # only contigs present in the BAM header, so a reference contig with no
+        # reads at all must start as zeros here to be counted as uncovered.
+        depth_arrays = {chrom: np.zeros(length, dtype=np.int32)
+                        for chrom, length in contig_lengths.items()}
+
+        unknown_contigs = set()
+        try:
+            proc = subprocess.Popen(['samtools', 'depth', '-a', bam],
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    text=True)
+            for line in proc.stdout:
+                parts = line.rstrip('\n').split('\t')
+                if len(parts) < 3:
+                    continue
+                array = depth_arrays.get(parts[0])
+                if array is None:
+                    unknown_contigs.add(parts[0])
+                    continue
+                index = int(parts[1]) - 1
+                if 0 <= index < array.size:
+                    array[index] = int(parts[2])
+            proc.stdout.close()
+            stderr = proc.stderr.read()
+            proc.stderr.close()
+            if proc.wait() != 0:
+                raise subprocess.CalledProcessError(proc.returncode,
+                                                    ['samtools', 'depth', '-a', bam],
+                                                    stderr=stderr)
         except subprocess.CalledProcessError as e:
             print(f"Error running samtools depth: {e}")
             raise
         except FileNotFoundError:
             print("Error: samtools not found. Please ensure samtools is installed and in your PATH.")
             raise
-            
-        coverage_df = pd.DataFrame.from_dict(coverage_dict, orient='index', columns=["depth"])
-        zero_dict = {}
-        reference_length = 0
-        
-        # Parse FASTA with error handling
-        try:
-            for record in SeqIO.parse(FASTA, "fasta"):
-                chrom = record.id
-                total_len = len(record.seq)
-                reference_length = reference_length + len(record.seq)
-                for pos in list(range(1, total_len + 1)):
-                    zero_dict[str(chrom) + "-" + str(pos)] = 0
-        except Exception as e:
-            print(f"Error parsing FASTA file {FASTA}: {e}")
-            raise
-                
-        zero_df = pd.DataFrame.from_dict(zero_dict, orient='index', columns=["depth"])
-        
-        # Improved pandas merge operation with error handling
-        try:
-            coverage_df = zero_df.merge(coverage_df, left_index=True, right_index=True, 
-                                      how='outer', suffixes=('_x', '_y'))
-            coverage_df = coverage_df.drop(columns=['depth_x'])
-            coverage_df = coverage_df.rename(columns={'depth_y': 'depth'})
-            coverage_df = coverage_df.fillna(0)
-            coverage_df['depth'] = coverage_df['depth'].astype(int)
-        except Exception as e:
-            print(f"Error processing coverage data: {e}")
-            raise
-        
-        total_length = len(coverage_df)
-        ave_coverage = coverage_df['depth'].mean()
-        zero_df = coverage_df[coverage_df['depth'] == 0]
-        total_zero_coverage = len(zero_df)
-        
+
+        if unknown_contigs:
+            # A BAM aligned against a different reference than the FASTA given here.
+            # Previously these positions were silently folded into the denominator by
+            # the outer merge, quietly changing every coverage percentage.
+            print(f'Warning: {len(unknown_contigs)} contig(s) in {os.path.basename(bam)} '
+                  f'are not in {os.path.basename(FASTA)} and were ignored: '
+                  f'{", ".join(sorted(unknown_contigs)[:5])}')
+
+        total_length = reference_length
+        # dtype=np.int64 on the sum: int32 would overflow above ~2.1e9 total depth,
+        # which a high-coverage bacterial genome can reach.
+        total_depth = sum(int(a.sum(dtype=np.int64)) for a in depth_arrays.values())
+        ave_coverage = (total_depth / total_length) if total_length else 0.0
+
+        # (chrom, position) for every uncovered base, 1-based.  Replaces indexing a
+        # DataFrame of every reference position and filtering it.
+        zero_positions = [(chrom, int(offset) + 1)
+                          for chrom, array in depth_arrays.items()
+                          for offset in np.flatnonzero(array == 0)]
+        total_zero_coverage = len(zero_positions)
+
         # Handle division by zero
         if reference_length > 0:
             percent_ref_with_zero_coverage = total_zero_coverage / reference_length * 100
@@ -184,25 +209,22 @@ class Zero_Coverage(Setup):
                                 print(line.strip(), file=header_out)
                 
                 # Create a new dataframe for zero coverage positions
-                zero_positions_list = []
-                for idx in zero_df.index:
-                    try:
-                        chrom, pos = idx.rsplit('-', 1)
-                        zero_positions_list.append({
-                            'CHROM': chrom,
-                            'POS': int(pos),
-                            'ID': '.',
-                            'REF': 'N',
-                            'ALT': '.',
-                            'QUAL': '.',
-                            'FILTER': '.',
-                            'INFO': '.',
-                            'FORMAT': 'GT',
-                            'Sample': './.'
-                        })
-                    except (ValueError, IndexError) as e:
-                        print(f"Error parsing position {idx}: {e}")
-                        continue
+                # zero_positions already holds (chrom, position) pairs, so there is no
+                # 'chrom-pos' string to split back apart.  The old form did
+                # idx.rsplit('-', 1), which was one hyphen in a contig name away from
+                # silently mis-parsing.
+                zero_positions_list = [{
+                    'CHROM': chrom,
+                    'POS': position,
+                    'ID': '.',
+                    'REF': 'N',
+                    'ALT': '.',
+                    'QUAL': '.',
+                    'FILTER': '.',
+                    'INFO': '.',
+                    'FORMAT': 'GT',
+                    'Sample': './.'
+                } for chrom, position in zero_positions]
                 
                 # Create a dataframe from the list of dictionaries
                 if zero_positions_list:
@@ -230,11 +252,26 @@ class Zero_Coverage(Setup):
                     if os.path.exists(temp_file):
                         os.remove(temp_file)
                         
-            except Exception as e:
-                print(f"Error creating zero coverage VCF: {e}")
-                # Fallback to copying original VCF
-                shutil.copyfile(vcf, zero_coverage_vcf)
+            except (OSError, KeyError, ValueError, TypeError,
+                    pd.errors.EmptyDataError) as e:
+                # This used to fall back to shutil.copyfile(vcf, zero_coverage_vcf).
+                # _zc.vcf is the artifact that records the difference between "no
+                # coverage here" and "matches the reference here"; an unmodified
+                # copy asserts a reference call at every uncovered position, and
+                # nothing downstream can tell.  With total_zero_coverage > 0 we know
+                # those positions exist, so writing the file anyway is not an option.
+                if os.path.exists(zero_coverage_vcf):
+                    os.remove(zero_coverage_vcf)
+                for temp_file in ['v_header.csv', 'v_annotated_body.csv']:
+                    if os.path.exists(temp_file):
+                        os.remove(temp_file)
+                raise RuntimeError(
+                    f'could not insert {total_zero_coverage} zero-coverage positions '
+                    f'into {os.path.basename(vcf)}: {type(e).__name__}: {e}. '
+                    f'No {zero_coverage_vcf} was written -- an unmodified copy would '
+                    f'report those positions as matching the reference.') from e
         else:
+            # No zero-coverage positions to insert, so the VCF is already correct.
             shutil.copyfile(vcf, zero_coverage_vcf)
             
         # Store all attributes
@@ -248,42 +285,6 @@ class Zero_Coverage(Setup):
         self.total_zero_coverage = total_zero_coverage
         self.percent_ref_with_zero_coverage = percent_ref_with_zero_coverage
 
-    def latex(self, tex):
-        """Generate LaTeX output with proper escaping"""
-        blast_banner = Banner(f'Coverage against {self.reference_name}')
-        
-        # Use regular string concatenation to avoid f-string backslash issues
-        print(r'\begin{table}[ht!]', file=tex)
-        print(r'\begin{adjustbox}{width=1\textwidth}', file=tex)
-        print(r'\begin{center}', file=tex)
-        print(r'\includegraphics[scale=1]{' + blast_banner.banner + '}', file=tex)
-        print(r'\end{center}', file=tex)
-        print(r'\end{adjustbox}', file=tex)
-        print(r'\begin{adjustbox}{width=1\textwidth}', file=tex)
-        print(r'\begin{tabular}{ l | l | l | l | l | l | l | l }', file=tex)
-        
-        # Build the header string without f-string backslashes
-        header_line = ('BAM File & Reference Length & Genome with Coverage & Average Depth & '
-                      'No Coverage Bases & Ambiguous SNPs & Quality SNPs ' + r'\\')
-        print(header_line, file=tex)
-        print(r'\hline', file=tex)
-        
-        # Escape underscores in BAM filename for LaTeX
-        bam_escaped = self.bam.replace('_', r'\_')
-        
-        # Build the data line without f-string backslashes
-        data_line = (f'{bam_escaped} & {self.reference_length:,} & {(self.genome_coverage*100):,.2f}' +
-                    r'\% & ' + f'{self.ave_coverage:,.1f}X & {self.total_zero_coverage:,} & ' +
-                    f'{self.ac1_count:,} & {self.good_snp_count:,} ' + r'\\')
-        print(data_line, file=tex)
-        
-        print(r'\hline', file=tex)
-        print(r'\end{adjustbox}', file=tex)
-        print(r'\vspace{0.1 mm}', file=tex)
-        print(r'\end{tabular}', file=tex)
-        print(r'\\', file=tex)
-        print(r'\end{table}', file=tex)
-    
     def excel(self, excel_dict):
         """Generate Excel statistics"""
         try:
@@ -333,11 +334,6 @@ if __name__ == "__main__":  # execute if directly access by the interpreter
     try:
         zero_coverage = Zero_Coverage(FASTA=args.FASTA, bam=args.bam, vcf=args.vcf, debug=args.debug)
 
-        # LaTeX report
-        latex_report = Latex_Report(zero_coverage.sample_name)
-        zero_coverage.latex(latex_report.tex)
-        latex_report.latex_ending()
-
         # Excel Stats
         excel_stats = Excel_Stats(zero_coverage.sample_name)
         zero_coverage.excel(excel_stats.excel_dict)
@@ -352,7 +348,7 @@ if __name__ == "__main__":  # execute if directly access by the interpreter
     #     os.makedirs(temp_dir)
     # files_grab = []
     # for files in ('*.aux', '*.log', '*tex', '*png', '*out', '*_all.bam', '*.bai', '*_filtered_hapall.vcf', '*_mapfix_hapall.vcf', '*_unfiltered_hapall.vcf', '*.sam', '*.amb', '*.ann', '*.bwt', '*.pac', '*.fasta.sa', '*_sorted.bam', '*.dict', 'chrom_ranges.txt', 'dup_metrics.csv', '*.fai'):
-    #     files_grab.extend(glob.glob(files))
+    #     files_grab.extend(sorted(glob.glob(files)))
     # for each in files_grab:
     #     shutil.move(each, temp_dir)
 

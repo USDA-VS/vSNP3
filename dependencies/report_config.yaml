@@ -1,0 +1,6 @@
+# report_config.yaml
+#
+# Optional branding for the step 1 HTML report.  The logo is read at report time
+# and embedded in the HTML, so the report stays a single portable file.  Point
+# logo_path at nothing, or remove the key, for a report with no logo.
+logo_path: /path/to/logo.png

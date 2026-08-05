@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.35"
+from vsnp3_version import __version__
 
 import os
 import re
@@ -197,6 +197,7 @@ if __name__ == "__main__":
     parser.add_argument('-c', '--color', action='store', dest='color', default='blue', help='Color of the kernel density plot')
     parser.add_argument('-g', '--histogram', action='store_true', dest='histogram', default=False, help='Generate histogram instead of kernel density plot')
     parser.add_argument('-d', '--debug', action='store_true', dest='debug', default=False, help='Keep temp files for debugging')
+    parser.add_argument('-v', '--version', action='version', version=f'{os.path.basename(__file__)}: version {__version__}')
 
     args = parser.parse_args()
 

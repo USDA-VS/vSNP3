@@ -10,7 +10,7 @@ Usage:
     python excel_merger.py -i <input_dir> [options]
 """
 
-__version__ = "3.35"
+from vsnp3_version import __version__
 
 import os
 import sys
@@ -57,7 +57,7 @@ class ExcelMerger:
 
     def get_excel_files(self) -> List[Path]:
         """Get list of Excel files matching the pattern."""
-        files = list(self.input_dir.glob(self.file_pattern))
+        files = sorted(self.input_dir.glob(self.file_pattern))
         if not files:
             raise FileNotFoundError(
                 f"No Excel files found matching pattern '{self.file_pattern}' "
@@ -205,6 +205,12 @@ def parse_arguments() -> argparse.Namespace:
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Set the logging level"
+    )
+
+    parser.add_argument(
+        "-v", "--version",
+        action="version",
+        version="{}: version {}".format(os.path.basename(__file__), __version__)
     )
 
     return parser.parse_args()

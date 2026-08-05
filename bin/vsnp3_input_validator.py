@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.35"
+from vsnp3_version import __version__
 
 import os
 import sys
@@ -784,6 +784,6 @@ if __name__ == "__main__":
     elif os.path.isdir(test_path):
         # Test directory of VCF files
         import glob
-        vcf_files = glob.glob(os.path.join(test_path, "*.vcf"))
+        vcf_files = sorted(glob.glob(os.path.join(test_path, "*.vcf")))
         results = validator.validate_vcf_list(vcf_files)
         validator.print_vcf_validation_summary(results)

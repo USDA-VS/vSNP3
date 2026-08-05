@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.35"
+from vsnp3_version import __version__
 
 import os
 import sys
@@ -234,7 +234,7 @@ if __name__ == "__main__":  # execute if directly access by the interpreter
     # Move all generated files to a dedicated directory
     files_grab = []
     for file_pattern in ('*.fasta', '*.gff', '*.gbk', '*.xlsx'):
-        files_grab.extend(glob.glob(file_pattern))
+        files_grab.extend(sorted(glob.glob(file_pattern)))
     acc_dir = args.accession
     if not os.path.exists(acc_dir):
         os.makedirs(acc_dir)

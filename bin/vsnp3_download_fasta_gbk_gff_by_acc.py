@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.35"
+from vsnp3_version import __version__
 
 import os
 import argparse
@@ -13,7 +13,22 @@ class Downloader:
 
     def __init__(self, accession):
         self.entrezDbName = 'nucleotide'
-        self.email = 'mickey_mouse@gmail.com'
+        # NCBI requires a real contact address so they can reach you before
+        # blocking an address that is overloading E-utilities.  This was
+        # 'mickey_mouse@gmail.com', which violates their usage policy and puts
+        # every user sharing an institutional IP at risk of being throttled.
+        self.email = os.environ.get('NCBI_EMAIL', '').strip()
+        if not self.email:
+            raise SystemExit(
+                'NCBI requires a contact email address for E-utilities requests.\n'
+                '  export NCBI_EMAIL="you@example.org"\n'
+                'Optionally also set NCBI_API_KEY for a higher rate limit:\n'
+                '  https://ncbiinsights.ncbi.nlm.nih.gov/2017/11/02/new-api-keys-for-the-e-utilities/')
+        Entrez.email = self.email
+        Entrez.tool = 'vsnp3'
+        api_key = os.environ.get('NCBI_API_KEY', '').strip()
+        if api_key:
+            Entrez.api_key = api_key
         self.accession = accession
 
     def gbk(self):

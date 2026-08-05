@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-__version__ = "3.35"
+from vsnp3_version import __version__
 
 import os
 import gzip
@@ -18,8 +18,6 @@ from Bio.SeqIO.QualityIO import FastqGeneralIterator
 
 from vsnp3_file_setup import Setup
 from vsnp3_file_setup import bcolors
-from vsnp3_file_setup import Banner
-from vsnp3_file_setup import Latex_Report
 from vsnp3_file_setup import Excel_Stats
 
 
@@ -238,31 +236,6 @@ class Spoligo(Setup):
         for spacer, count in count_summary.items():
             self.count_summary_list.append(count)
 
-    def latex(self, tex):
-        blast_banner = Banner("Spoligotype")
-        print(r'\begin{table}[ht!]', file=tex)
-        print(r'\begin{adjustbox}{width=1\textwidth}', file=tex)
-        print(r'\begin{center}', file=tex)
-        print(r'\includegraphics[scale=1]{' + blast_banner.banner + '}', file=tex)
-        print(r'\end{center}', file=tex)
-        print(r'\end{adjustbox}', file=tex)
-        print(r'\begin{adjustbox}{width=1\textwidth}', file=tex)
-        print(r'\begin{tabular}{ l | l | l }', file=tex)
-        print(r'\multicolumn{3}{l}{Spacer Counts} \\', file=tex)
-        print(r'\hline', file=tex)
-        count_summary = ":".join(map(str, self.count_summary_list))
-        print(r'\multicolumn{3}{l}{' + count_summary + r' } \\', file=tex)
-        print(r'\hline', file=tex)
-        # Fixed f-string with raw string issue
-        threshold_str = str(self.call_cut_off)
-        print(f'Binary Code, threshold greater than {threshold_str} spacer counts & Octal Code & SB Number \\\\', file=tex)
-        print(r'\hline', file=tex)
-        print(f'{self.sample_binary} & {self.octal} & {self.sbcode} \\\\', file=tex)
-        print(r'\hline', file=tex)
-        print(r'\end{tabular}', file=tex)
-        print(r'\end{adjustbox}', file=tex)
-        print(r'\end{table}', file=tex)
-
     def excel(self, excel_dict):
         excel_dict['Spoligotype Spacer Counts'] = ":".join(map(str, self.count_summary_list))
         excel_dict['Spoligotype Binary Code'] = f'binary-{self.sample_binary}'
@@ -292,11 +265,6 @@ if __name__ == "__main__":  # execute if directly access by the interpreter
     spoligo = Spoligo(SAMPLE_NAME=args.SAMPLE_NAME, FASTQ_R1=args.FASTQ_R1, FASTQ_R2=args.FASTQ_R2, debug=args.debug)
     spoligo.spoligo()
 
-    # Latex report
-    latex_report = Latex_Report(spoligo.sample_name)
-    spoligo.latex(latex_report.tex)
-    latex_report.latex_ending()
-
     # Excel Stats
     excel_stats = Excel_Stats(spoligo.sample_name)
     spoligo.excel(excel_stats.excel_dict)
@@ -306,8 +274,8 @@ if __name__ == "__main__":  # execute if directly access by the interpreter
     if not os.path.exists(temp_dir):
         os.makedirs(temp_dir)
     files_grab = []
-    for files in ('*.aux', '*.log', '*tex', '*png', '*out'):
-        files_grab.extend(glob.glob(files))
+    for files in ('*.log', '*out'):
+        files_grab.extend(sorted(glob.glob(files)))
     for each in files_grab:
         shutil.move(each, temp_dir)
 
