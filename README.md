@@ -1,34 +1,69 @@
-# vSNP3: High-Resolution SNP Analysis for Pathogen Surveillance
+# vSNP3
 
 [![GitHub release](https://img.shields.io/github/v/release/USDA-VS/vSNP3)](https://github.com/USDA-VS/vSNP3/releases)
 [![License](https://img.shields.io/github/license/USDA-VS/vSNP3)](https://github.com/USDA-VS/vSNP3/blob/main/LICENSE)
 [![Citation](https://img.shields.io/badge/citation-BMC%20Genomics-blue)](https://bmcgenomics.biomedcentral.com/articles/10.1186/s12864-024-10437-5)
 [![Conda](https://img.shields.io/conda/v/bioconda/vsnp3)](https://anaconda.org/bioconda/vsnp3)
+[![GUI Training](https://img.shields.io/badge/GUI-training%20%26%20SOP-orange)](https://kapurlab.github.io/bioinformatic_diagnostic_tools/vsnp3_gui_training.html#start)
 
-**vSNP3** is a powerful tool for high-resolution bacterial and viral SNP analysis, designed specifically for disease tracing and outbreak investigations in diagnostic laboratories.
+vSNP3 finds SNPs in bacterial and viral genomes and builds SNP tables and phylogenetic trees from them. It was built for disease tracing and outbreak investigations in diagnostic labs.
 
-<!-- <p align="center">
-  <img src="./docs/img/step2_figtree.png" alt="Sample phylogenetic tree" width="500"/>
-</p> -->
+## Two ways to run it
 
-## 🌟 Why Choose vSNP3?
+You can run vSNP3 from your web browser using the vSNP3 GUI, or from the command line. Both run the same analysis and give the same results.
 
-- **Superior Resolution**: Precisely identifies with confidence strain differences down to the single nucleotide level
-- **Flexible Database**: Build, maintain, and update your strain database without rerunning all samples
-- **Intelligent Sample Classification**: Automatically group samples based on defining SNPs
-- **Computational Efficiency**: Focus analysis on relevant sample subsets, saving time and resources
-- **Comprehensive Output**: Complete suite of BAM, VCF, annotated SNP matrices, and phylogenetic trees
-- **Zero Coverage Tracking**: Unique capability to track regions with no sequence data
-- **Mixed SNP Handling**: Accurately represents positions with multiple alleles using IUPAC codes - ability to identify mixed strains
+If you're new to vSNP3, or you'd rather not work in a terminal, start with the GUI. It comes with a step-by-step training guide that takes you from install to a finished tree. If you're running vSNP3 on a cluster or as part of a pipeline, go to [Installation](#installation).
 
-## 🔍 The vSNP3 Advantage: Two-Step Process Explained
+---
 
-### Why Two Steps Are Better Than One
+## vSNP3 GUI
 
-Most SNP callers force you to reprocess all your samples each time you add new ones. vSNP3's two-step approach is different:
+[Get the GUI here](https://github.com/kapurlab/bioinformatic_diagnostic_tools).
 
-1. **Step 1: Process Alignment Once** - Align reads and call SNPs for each sample individually
-2. **Step 2: Combine and run VCF files** - Generate matrices and trees from any combination of samples
+There is a training guide (SOP) that uses the GUI linked above to walk through the installation process, and uses a test dataset to show how vSNP works.
+
+| | |
+|---|---|
+| **Time** | About 3 hours the first time. Most of that is waiting for downloads and runs. Slow internet makes it longer. |
+| **You need** | A Mac, Linux, or Windows computer, internet, and about 50 GB of free disk space. |
+| **Tested** | 1 October 2026, vSNP GUI v0.4.127, vsnp3 3.36. Newer versions may look a little different. |
+
+**[Start the training guide →](https://kapurlab.github.io/bioinformatic_diagnostic_tools/vsnp3_gui_training.html#start)**
+
+### What the GUI handles for you
+
+- Installing on macOS, Linux, or Windows, with every command written out
+- A dashboard for checking, updating, and restarting the tools
+- Downloading reads from SRA: paste the accession numbers and it fetches them
+- A quality check after Step 1 that flags any sample worth a second look
+- Adding sample names, so trees show where samples came from instead of just SRR numbers
+- A tree viewer where you can search for samples and open the SNP table for any clade
+
+For GUI questions or bugs, use the [bioinformatic_diagnostic_tools issue tracker](https://github.com/kapurlab/bioinformatic_diagnostic_tools/issues).
+
+---
+
+## What vSNP3 does well
+
+- Calls SNPs at single-nucleotide resolution, and every call can be checked
+- Lets you add new samples without rerunning the old ones
+- Sorts samples into groups automatically using defining SNPs
+- Lets you compare just the samples you care about, which saves time
+- Produces BAM and VCF files, annotated SNP tables, and phylogenetic trees
+- Tracks positions with no coverage, so missing data isn't mistaken for a match
+- Marks mixed positions with IUPAC codes, which helps you spot mixed strains
+
+## How it works
+
+![vSNP3 workflow](docs/img/vsnp3_gui_workflow.png)
+
+vSNP3 runs in two steps.
+
+**Step 1** runs once per sample. It aligns the reads to a reference genome and calls SNPs, which gives you a VCF file. That VCF goes into your database and stays there.
+
+**Step 2** takes any set of VCFs from your database and builds SNP tables and trees.
+
+This split is the main idea behind vSNP3. With many SNP pipelines, adding new samples means rerunning everything. With vSNP3, you run Step 1 on just the new samples, then rerun Step 2. You can also run Step 2 on different sets of samples for different investigations.
 
 <p align="center">
   <img src="./docs/img/step1_file_structure.png" alt="Step 1 output" width="550"/>
@@ -37,15 +72,45 @@ Most SNP callers force you to reprocess all your samples each time you add new o
   <img src="./docs/img/step2_file_structure.png" alt="Step 2 output" width="550"/>
 </p>
 
-This approach lets you:
-- Add new samples to your analysis without reprocessing existing ones
-- Create different sample groupings for different investigations
-- Save computational resources and time
-- Maintain a growing, curated database of SNP profiles
+### Step 1: alignment and SNP calling
 
-### Defining SNPs: Sample Classification
+For each sample, Step 1:
 
-A unique feature of vSNP3 is its use of defining SNPs to automatically categorize samples:
+- aligns reads to your reference genome
+- calls high-quality SNPs
+- tracks regions with zero coverage
+- reports quality metrics
+- assigns the sample to a group based on defining SNPs
+
+Here's what the quality metrics look like:
+
+![Step 1 alignment metrics](./docs/img/step1_stats.png)
+
+### Step 2: SNP tables and trees
+
+Step 2 combines results from any set of samples you've run through Step 1. It:
+
+- builds SNP tables
+- builds phylogenetic trees
+- shows mixed positions using IUPAC codes
+- writes an HTML summary report, with a PDF of each
+
+Example output:
+
+<p align="center">
+  <img src="./docs/img/step2_figtree.png" alt="Step 2 tree" width="400"/>
+  <img src="./docs/img/step2_table.png" alt="Step 2 SNP table" width="600"/>
+</p>
+
+## An example
+
+Say you're following an outbreak over time. You run your first 10 samples through Step 1, then run Step 2 to get a tree. A month later, 5 more samples come in. You run Step 1 on only those 5, then run Step 2 on all 15 to see where the new ones fit. If one cluster stands out, you can run Step 2 on just that group for a closer look.
+
+The [GUI training](https://kapurlab.github.io/bioinformatic_diagnostic_tools/vsnp3_gui_training.html#start) works the same way with real data. 21 known samples make up the database, and you figure out where two new outbreaks came from.
+
+## Defining SNPs
+
+A defining SNP is a position that splits samples into groups. If a sample has a T at a certain position, it goes in Group A, and if it has a C, it goes in Group B. Other positions split those groups again.
 
 ```
 Full Dataset (100 samples)
@@ -63,259 +128,143 @@ Full Dataset (100 samples)
         └── Subgroup B2 (40 samples) - Defining SNP: position 345678 = C
 ```
 
-Benefits of defining SNPs:
-- **Automatic Grouping**: Samples are classified into groups based on specific SNP patterns
-- **Focused Analysis**: Quickly drill down to specific subsets of related samples
-- **Computational Efficiency**: Reduce analysis time by working with smaller, relevant sample sets
+vSNP3 checks every sample at these positions during Step 1 and assigns its group. That keeps a large database organized, and it means you can run Step 2 on one group instead of everything.
 
-## 📦 Installation
+### The defining SNP file
+
+Each reference type has an Excel file that lists its defining SNPs. To find yours:
+
+```bash
+vsnp3_path_adder.py -s
+```
+
+This lists your installed reference types and the paths to their files.
+
+<p align="center">
+  <img src="./docs/img/defining_snps_example.png" alt="Defining SNP file layout" width="800"/>
+</p>
+
+The file is laid out like this:
+
+1. **Row 1** lists the defining positions, as chromosome:position.
+2. **Row 2** names the group each position defines, such as Mbovis-All, Mbovis-01, or Mbovis-01A.
+3. **The rows below** list positions to filter out when analyzing that group.
+
+Some positions give unreliable calls in certain lineages. Listing them under a group keeps them out of that group's analysis.
+
+You can edit this file as you learn more, adding groups for new lineages or new positions to filter. Keep a backup, since it holds a lot of work.
+
+---
+
+## Installation
+
+If you're using the GUI, the [training guide](https://kapurlab.github.io/bioinformatic_diagnostic_tools/vsnp3_gui_training.html#start) covers installation, so you can skip this section. If you're running from the terminal, follow the steps below:
 
 ```bash
 conda create -c conda-forge -c bioconda -n vsnp3 vsnp3=3.36
 conda activate vsnp3
 ```
 
-For detailed setup instructions, see [conda instructions](./docs/instructions/conda_instructions.md).
+For more detail, see the [conda instructions](./docs/instructions/conda_instructions.md).
 
-## 🚀 Quick Start
+## Quick start
+
+Check the install:
 
 ```bash
-# Verify installation
 vsnp3_step1.py -h
 vsnp3_step2.py -h
 ```
+
+Download the test dataset and add its reference types:
+
 ```bash
-# Download test dataset and add reference types
 cd ${HOME}
 git clone https://github.com/USDA-VS/vsnp3_test_dataset.git
 cd vsnp3_test_dataset/vsnp_dependencies
 vsnp3_path_adder.py -d $(pwd)
 ```
+
+Run Step 1 on a sample. You only need to do this once per sample.
+
 ```bash
-# Run Step 1: Process a single sample (only needed once per sample)
 cd ~/vsnp3_test_dataset/AF2122_test_files/step1
 vsnp3_step1.py -r1 *_R1*.fastq.gz -r2 *_R2*.fastq.gz -t Mycobacterium_AF2122
 ```
+
+Run Step 2 to build the SNP table and tree. You can run this on any set of samples.
+
 ```bash
-# Run Step 2: Generate SNP matrix and tree (can be run with any sample combination)
 cd ~/vsnp3_test_dataset/AF2122_test_files/step2
 vsnp3_step2.py -a -t Mycobacterium_AF2122
 ```
 
-## 📊 Real-World Example: Building Your Surveillance Database
+## Setting up reference types
 
-Imagine you're tracking a bacterial outbreak over time:
+A reference type is the set of files vSNP3 needs for one organism:
 
-1. **Initial Investigation**: Process your first 10 samples through Step 1, then use Step 2 to generate a phylogenetic tree
-2. **New Sample Analysis**: When you receive 5 new samples, only run Step 1 on these new samples
-3. **Updated Results**: Run Step 2 again using all 15 samples to see how the new samples relate to the existing ones
-4. **Focused Investigation**: Use defining SNPs to identify a specific cluster, then create a detailed analysis with just those samples
+- a reference genome (FASTA)
+- a GenBank file for annotation
+- the defining SNP file (Excel)
+- a metadata file that maps sample IDs to readable names (Excel)
 
-This workflow saves time and resources while maintaining a comprehensive database of all processed samples.
+You only set these up once. Put each reference type in its own folder inside a parent folder. The folder name becomes the reference type name you use in commands.
 
-## 📘 Key Features in Detail
+```
+Parent_Directory/
+   └── Mycobacterium_AF2122/
+       ├── defining_filter.xlsx    # defining SNPs and filter positions
+       ├── metadata.xlsx           # sample name mapping
+       ├── AF2122.fasta            # reference genome
+       └── AF2122.gbk              # GenBank annotation
+```
 
-### Step 1: Alignment and SNP Calling
-
-Step 1 processes raw sequencing data for each sample individually:
-
-- Aligns reads to your reference genome
-- Calls high-quality SNPs
-- Tracks regions with zero coverage
-- Generates comprehensive quality metrics
-- Automatically assigns samples to groups based on defining SNPs
-
-Sample output metrics:
-![Step 1 alignment metrics](./docs/img/step1_stats.png)
-
-### Step 2: Matrix and Tree Generation
-
-Step 2 combines results from multiple samples:
-
-- Creates SNP matrices from any combination of processed samples
-- Builds phylogenetic trees showing evolutionary relationships
-- Handles mixed SNPs using IUPAC ambiguity codes
-- Generates HTML summary reports for easy interpretation, with a PDF of each
-
-Sample outputs:
-<p align="center">
-  <img src="./docs/img/step2_figtree.png" alt="Step 2 tree" width="400"/>
-  <img src="./docs/img/step2_table.png" alt="Step 2 SNP matrix" width="600"/>
-</p>
-
-### Using Defining SNPs
-
-vSNP3's defining SNP capability allows you to:
-
-- Automatically classify samples into hierarchical groups
-- Focus your analysis on biologically relevant sample subsets
-- Quickly identify related samples in an outbreak scenario
-- Build a labeled sample database
-
-## 🧬 Understanding Defining SNPs
-
-One of vSNP3's most powerful features is its ability to automatically classify samples using defining SNPs. Each reference type has its own defining SNP Excel file that defines these critical positions.
-
-### Locating Your Defining SNP Files
-
-After installation, you can find the path to your defining SNP files with:
+Point vSNP3 at the parent folder, then check that it worked:
 
 ```bash
+vsnp3_path_adder.py -d /path/to/Parent_Directory
 vsnp3_path_adder.py -s
 ```
 
-This will show all installed reference types and their associated file paths.
+You should see your reference type listed with the paths to its files. A parent folder can hold as many reference types as you like, and you can add more parent folders by running `vsnp3_path_adder.py -d` again.
 
-### Anatomy of a Defining SNP File
+A few tips:
 
-<p align="center">
-  <img src="./docs/img/defining_snps_example.png" alt="Defining SNPs Excel Structure" width="800"/>
-</p>
+- Keep one folder per organism.
+- Use folder names that say what the organism is.
+- Use the same reference across related analyses.
+- Back up your defining SNP files.
 
-The defining SNP Excel file has a structured format:
+## Other tools
 
-1. **Row 1**: Contains chromosome:position identifiers for each SNP position
-2. **Row 2**: Names of each group/subgroup (e.g., Mbovis-All, Mbovis-01, Mbovis-01A)
-3. **Remaining Rows**: Positions to be filtered from the analysis for each specific group
+vSNP3 also comes with scripts for:
 
-When vSNP3 analyzes a sample:
-- It checks the sample's nucleotides at each defining position
-- Based on the SNP pattern, it automatically assigns the sample to the appropriate group
-- During analysis, it filters out the problematic positions listed below each group's column
-
-### Customizing Your Analysis
-
-The beauty of this system is its flexibility:
-- You can define hierarchical groups based on evolutionary relationships
-- Each group can have its own set of filtered positions to improve analysis quality
-- As you discover new lineages, you can update the defining SNP file to reflect them
-
-This classification system allows you to:
-- Automatically organize samples as they're processed
-- Focus your analysis on specific groups of interest
-- Maintain consistent classifications across your entire database
-- Filter out positions known to be problematic for specific lineages
-
-The defining SNP system transforms vSNP3 from a simple SNP caller into an intelligent analysis platform that grows more valuable as your sample database expands.
-
-## 🧰 Reference Types
-
-Reference types have key files that provide structure to your analysis:
-- **Defining filter file**: Identifies group-specific SNPs
-- **Metadata file**: Maps sample names
-- **FASTA reference**: For read alignment
-- **GenBank file**: For annotation
-
-Adding a reference is simple:
-```bash
-vsnp3_path_adder.py -d /path/to/reference_files
-```
-
-Reference types are called based on their directory names once their parent directory is added.
-
-## 🔄 Setting Up Reference Types
-
-One of the most important first steps in using vSNP3 is setting up your reference types. This only needs to be done once, and it enables all the powerful features of vSNP3 including automatic sample classification and group-specific filtering.  Reference types are called based on their directory names once their **parent directory** is added.
-
-### What Is a Reference Type?
-
-A reference type in vSNP3 is a collection of files for a specific organism that includes:
-- A reference genome (FASTA)
-- Annotation information (GenBank)
-- Defining SNP positions (Excel file)
-- Sample name mapping (Excel file)
-
-These files work together to provide the foundation for your analyses.
-
-### Adding Your First Reference Type
-
-Adding a reference type is simple using the `vsnp3_path_adder.py` utility:
-
-Parent directory contains the reference directory.  This parent directory may contain many reference types, each a separate subfolder.
-
-```bash
-# Add a reference parent directory containing all necessary files.  
-vsnp3_path_adder.py -d /path/to/parent_dictory
-```
-
-This command tells vSNP3 where to find the reference files for a particular organism. The reference type name is taken directly from the directory name. For example, if your files are in a directory called `Mycobacterium_AF2122`, that becomes the reference type name you'll use in your commands.
-
-### Example Reference Type Setup
-
-Let's walk through a complete example:
-
-1. **Prepare your reference directory**
-   
-   Create a directory with these files:
-   ```
-   Parent_Directory/
-      └──Mycobacterium_AF2122/
-         ├── defining_filter.xlsx    # Contains defining SNPs and filter positions
-         ├── metadata.xlsx           # Sample name mapping
-         ├── AF2122.fasta            # Reference genome
-         └── AF2122.gbk              # GenBank annotation file
-   ```
-
-2. **Add the reference type to vSNP3**
-   ```bash
-   vsnp3_path_adder.py -d /path/to/Parent_Directory
-   ```
-
-3. **Verify the reference was added**
-   ```bash
-   vsnp3_path_adder.py -s
-   ```
-   
-   You should see your reference type listed, along with paths to all associated files.
-
-### Managing Multiple Reference Types
-
-vSNP3 allows you to work with multiple reference types:
-
-- **Adding additional references**: Simply run the path adder for each new reference
-  ```bash
-  vsnp3_path_adder.py -d /path/to/another_parent_directory
-  ```
-
-- **Viewing all references**: Check which references are available
-  ```bash
-  vsnp3_path_adder.py -s
-  ```
-
-### Best Practices for Reference Management
-
-- **Organize by organism**: Keep reference files for each organism in separate directories
-- **Use descriptive names**: Choose reference type names that clearly identify the organism
-- **Keep references consistent**: Use the same reference across all related analyses
-- **Back up your reference files**: Save your defining SNP files especially, as they contain valuable classification information
-
-By properly setting up your reference types, you're creating a foundation for consistent, repeatable analyses that grow more valuable as your sample database expands.
-
-## 🔧 Additional Tools
-
-vSNP3 includes utility scripts for:
-- Adding reference paths
+- adding reference paths
 - MLST typing
-- Downloading reference genomes
-- Filter optimization
-- Spoligotyping
+- downloading reference genomes
+- filter optimization
+- spoligotyping
 
-For full details, see [Additional Tools](./docs/instructions/additional_tools.md).
+See [Additional Tools](./docs/instructions/additional_tools.md) for details.
 
-## 💡 Common Use Cases
+## What people use it for
 
-- **Disease outbreak investigation**: Track transmission chains in real time
-- **Surveillance programs**: Monitor pathogen evolution over time
-- **Vaccine strain monitoring**: Detect drift from vaccine strains
-- **Mix strain evaluation**: Identify mixed strains
-- **Antimicrobial resistance tracking**: Link resistance profiles to genetic markers
+- Tracing transmission during outbreaks
+- Surveillance and tracking how a pathogen changes over time
+- Checking for drift from vaccine strains
+- Spotting mixed strains
+- Linking antimicrobial resistance to genetic markers
 
-## 🤝 Support and Citation
+## Support and citation
 
-For support, please open an [issue on GitHub](https://github.com/USDA-VS/vSNP3/issues) or [email directly](mailto:tod.p.stuber@usda.gov).
+For help with vSNP3, open an [issue on GitHub](https://github.com/USDA-VS/vSNP3/issues) or [email me](mailto:tod.p.stuber@usda.gov). For help with the GUI, open an issue on [bioinformatic_diagnostic_tools](https://github.com/kapurlab/bioinformatic_diagnostic_tools/issues).
 
-If you use vSNP3 in your research, please [cite our article](https://bmcgenomics.biomedcentral.com/articles/10.1186/s12864-024-10437-5).
+If you use vSNP3 in your work, please [cite the paper](https://bmcgenomics.biomedcentral.com/articles/10.1186/s12864-024-10437-5):
 
-## 📚 Further Reading
+> Hicks J, et al. vSNP: a SNP pipeline for the generation of transparent SNP matrices and phylogenetic trees from whole genome sequencing data sets. *BMC Genomics*. 2024;25:545.
 
-For archived documentation from previous versions, see [Archived Detail](https://github.com/USDA-VS/vSNP/blob/master/docs/detailed_usage.md).
+## More reading
+
+- [vSNP3 GUI training guide (SOP)](https://kapurlab.github.io/bioinformatic_diagnostic_tools/vsnp3_gui_training.html#start)
+- [vSNP3 orientation slides](https://kapurlab.github.io/bioinformatic_diagnostic_tools/vsnp3_orientation_slides.html)
+- [Documentation from earlier versions](https://github.com/USDA-VS/vSNP/blob/master/docs/detailed_usage.md)
