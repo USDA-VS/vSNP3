@@ -50,7 +50,7 @@ class Ref_Options():
         self.ref_options_file = ref_options_file
         
         try:
-            with open(ref_options_file, 'r') as dep_paths:
+            with open(ref_options_file, 'r', encoding='utf-8', errors='replace') as dep_paths:
                 dependency_paths = [line.strip() for line in dep_paths]
         except FileNotFoundError:
             print(f"Warning: Reference options file not found: {ref_options_file}")
@@ -66,6 +66,7 @@ class Ref_Options():
                 all_ref_options = all_ref_options + ref_options
         all_ref_options = [x for x in all_ref_options if os.path.isdir(x)] #only capture directories
         self.all_ref_options = all_ref_options
+        self.detection_note = None   # set when the reference had to be guessed from FASTA headers
 
         if os.path.isdir(select_ref): # -t directory name with full path
             print("Directory is a path on the file system")
@@ -87,7 +88,7 @@ class Ref_Options():
                 for directory in all_ref_options:
                     try:
                         for each_fasta in sorted(glob.glob(f'{directory}/*fasta')):
-                            with open(each_fasta, 'r') as fasta_file:
+                            with open(each_fasta, 'r', encoding='utf-8', errors='replace') as fasta_file:
                                 for each_line in fasta_file:
                                     if each_line.startswith(">"):
                                         reference_header_capture[directory].append(each_line.strip())
@@ -95,19 +96,49 @@ class Ref_Options():
                         print(f"Warning: Could not read fasta file in {directory}: {e}")
                         continue
                 
+                # A reference directory whose FASTA header ID is the CHROM of
+                # the VCFs wins; the old test, `select_ref in " ".join(header)`,
+                # was a substring match, so a short or generic contig name
+                # ('1', 'chromosome', 'contig_1') picked the first directory in
+                # sorted order whose headers contained it, and with it that
+                # directory's defining SNPs, metadata and gbk.  The substring
+                # test is kept only as the fallback when no header ID matches.
+                exact, by_substring = [], []
                 for directory, header in reference_header_capture.items():
-                    if select_ref in " ".join(header):
-                        self.select_ref = select_ref
-                        self.path = directory
-                        self.metadata_gather(directory)
-                        break
+                    ids = {line[1:].split()[0] for line in header if len(line) > 1}
+                    if select_ref in ids:
+                        exact.append(directory)
+                    elif select_ref in " ".join(header):
+                        by_substring.append(directory)
+                self.detection_note = None
+                if len(exact) > 1:
+                    self.detection_note = (
+                        f'contig {select_ref} is a FASTA header ID in more than one reference '
+                        f'directory ({", ".join(os.path.basename(d) for d in exact)}); the first '
+                        f'in sorted order was used. Name the reference with -t to choose.')
+                    print(f'\n### {self.detection_note}\n')
+                elif not exact and by_substring:
+                    self.detection_note = (
+                        f'no reference directory has a FASTA header ID equal to contig '
+                        f'{select_ref}; {os.path.basename(by_substring[0])} was chosen because '
+                        f'its header text contains it. Name the reference with -t to be sure.')
+                    print(f'\n### {self.detection_note}\n')
+                for directory in exact + by_substring:
+                    self.select_ref = select_ref
+                    self.path = directory
+                    self.metadata_gather(directory)
+                    break
 
     def metadata_gather(self, directory):
+        # Matched on the file name, not the full path.  These tests ran against
+        # the whole path, so a reference directory anywhere under a folder with
+        # "meta" or "remove" in its name (a "metagenomics" project, say) lost its
+        # defining-SNP file and ran with no groups and no filters, silently.
         defining_snps = sorted(glob.glob(f'{directory}/*xlsx'))
-        defining_snps = [efile for efile in defining_snps if not re.search(r'~\$.*', efile)] #ignore opened files
+        defining_snps = [efile for efile in defining_snps if not re.search(r'~\$.*', os.path.basename(efile))] #ignore opened files
         # there are 3 excel files.  only 1 excel file for variable "excel".  it must be the non-*meta* and non-*remove* file
-        defining_snps = [efile for efile in defining_snps if not re.search(r'.*remove.*', efile)] # just incase it is still in directory, remove it so only one excel is found below
-        defining_snps = [efile for efile in defining_snps if not re.search(r'.*meta.*', efile)]
+        defining_snps = [efile for efile in defining_snps if not re.search(r'remove', os.path.basename(efile))] # just incase it is still in directory, remove it so only one excel is found below
+        defining_snps = [efile for efile in defining_snps if not re.search(r'meta', os.path.basename(efile))]
         #check that multiple files are not found for a single variable.  Each variable must point to just one file.
         if len(defining_snps) > 1:
             raise AmbiguousReferenceError(
@@ -122,7 +153,7 @@ class Ref_Options():
                 
         # remove from analysis
         remove = sorted(glob.glob(f'{directory}/*remove*xlsx'))
-        remove = [efile for efile in remove if not re.search(r'~\$.*', efile)] #ignore opened files
+        remove = [efile for efile in remove if not re.search(r'~\$.*', os.path.basename(efile))] #ignore opened files
         if len(remove) > 1:
             raise AmbiguousReferenceError(
                 f'{self.select_ref} contains more than one remove-from-analysis file at '
@@ -136,7 +167,7 @@ class Ref_Options():
                 
         #metadata
         metadata = sorted(glob.glob(f'{directory}/*meta*xlsx'))
-        metadata = [efile for efile in metadata if not re.search(r'~\$.*', efile)] #ignore opened files
+        metadata = [efile for efile in metadata if not re.search(r'~\$.*', os.path.basename(efile))] #ignore opened files
         if len(metadata) > 1:
             raise AmbiguousReferenceError(
                 f'{self.select_ref} contains more than one metadata file at '

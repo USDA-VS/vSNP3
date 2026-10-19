@@ -41,9 +41,9 @@ class Add_Path:
     #insure no blank lines are in file
     def remove_blank_lines(self):
         try:
-            with open(self.abspath, "r") as open_file:
+            with open(self.abspath, "r", encoding="utf-8", errors="replace") as open_file:
                 all_lines = open_file.readlines()
-            with open(self.abspath, "w") as write_back:  
+            with open(self.abspath, "w", encoding="utf-8", errors="replace") as write_back:  
                 [write_back.write(line) for line in all_lines if line.strip()]
         except (IOError, OSError) as e:
             print(f"Error accessing file {self.abspath}: {e}")
@@ -51,14 +51,14 @@ class Add_Path:
     def add_to_path(self):
         #append new path to file
         try:
-            with open(self.abspath, 'a') as dep_paths:
+            with open(self.abspath, 'a', encoding='utf-8', errors='replace') as dep_paths:
                 print(self.added_directory, file=dep_paths)
 
             # Remove duplicate lines from file
-            with open(self.abspath, "r") as infile:
+            with open(self.abspath, "r", encoding="utf-8", errors="replace") as infile:
                 all_lines = [line.rstrip() for line in infile]
             unique_lines = set(all_lines)
-            with open(self.abspath, "w") as outfile:
+            with open(self.abspath, "w", encoding="utf-8", errors="replace") as outfile:
                 for each_line in unique_lines:
                     print(each_line, file=outfile)
         except (IOError, OSError) as e:
@@ -67,7 +67,7 @@ class Add_Path:
     def show_options(self):
         # Show reference options
         try:
-            with open(self.abspath, 'r') as dep_paths:
+            with open(self.abspath, 'r', encoding='utf-8', errors='replace') as dep_paths:
                 reference_options_paths = [line.rstrip() for line in dep_paths]
         except (IOError, OSError) as e:
             print(f"Error reading file {self.abspath}: {e}")

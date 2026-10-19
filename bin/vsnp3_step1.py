@@ -1,9 +1,20 @@
 #!/usr/bin/env python
 
-from vsnp3_version import __version__
-
 import os
 import sys
+
+from vsnp3_version import __version__
+
+# --version is answered before anything heavy is imported.  pandas, Biopython
+# and dask below take seconds to import from a slow network file system, and
+# the vSNP GUI's provenance writer probes `vsnp3_step1.py --version` under a
+# 10 s timeout, recording an empty version when the imports were slow.  The
+# text is the one argparse prints for -v below, so nothing that reads it sees a
+# difference.
+if __name__ == "__main__" and any(arg in ('-v', '--version') for arg in sys.argv[1:]):
+    print(f'{os.path.basename(__file__)}: version {__version__}')
+    sys.exit(0)
+
 import subprocess
 import shutil
 import glob
@@ -19,15 +30,17 @@ from vsnp3_file_setup import Setup
 from vsnp3_file_setup import bcolors
 from vsnp3_file_setup import HtmlReport
 from vsnp3_file_setup import Excel_Stats
+from vsnp3_file_setup import fastq_usability_verdict, reference_usability_verdict
 from vsnp3_input_validator import validate_file_inputs
 
 from vsnp3_fastq_stats_seqkit import FASTQ_Stats
 from vsnp3_best_reference_sourmash import Best_Reference
 from vsnp3_reference_options import Ref_Options
-from vsnp3_alignment_vcf import Alignment
+from vsnp3_alignment_vcf import Alignment, concatenated_reference_name
 from vsnp3_spoligotype import Spoligo
 from vsnp3_version import NANOPORE_AVG_READ_LEN_CUTOFF
-from vsnp3_group_reporter import GroupLookupError, GroupReporter
+from vsnp3_zero_coverage import no_snp_notice, mixed_sample_notice
+from vsnp3_group_reporter import GroupLookupError, GroupReporter, NoDefiningSnpWorkbook
 from vsnp3_fasta_to_fastq import Fasta_to_Paired_Fastq
 
 # Force 'C' locale for consistent decimal point handling
@@ -54,7 +67,7 @@ class vSNP3_Step1(Setup):
             concatenated_FASTA = self.concat_fasta(FASTA) # -f option for FASTA will take wildcard for multiple FASTAs
             Setup.__init__(self, SAMPLE_NAME=SAMPLE_NAME, FASTA=concatenated_FASTA, FASTQ_R1=FASTQ_R1, FASTQ_R2=FASTQ_R2, gbk=gbk, debug=debug)
             self.reference_type = None
-            with open(self.FASTA) as f:
+            with open(self.FASTA, encoding='utf-8', errors='replace') as f:
                 self.top_header_description = f.readline()
                 
         elif reference_type: # -t directory name
@@ -63,7 +76,7 @@ class vSNP3_Step1(Setup):
             self.excel_stats.excel_dict["Reference"] = f'{reference_type} Forced'
             Setup.__init__(self, SAMPLE_NAME=SAMPLE_NAME, FASTA=concatenated_FASTA, FASTQ_R1=FASTQ_R1, FASTQ_R2=FASTQ_R2, gbk=reference_options.gbk, debug=debug)
             self.reference_type = reference_type
-            with open(self.FASTA) as f:
+            with open(self.FASTA, encoding='utf-8', errors='replace') as f:
                 self.top_header_description = f.readline()
                 
         else: # IF NO REFERENCE PROVIDED SEEK A "BEST REFERENCE", for tb, brucella, paraTB or SARS-CoV-2
@@ -153,19 +166,13 @@ class vSNP3_Step1(Setup):
         """
         Concatenate multiple FASTA files into a single file
         """
-        basenames = []
-        fasta_name = []
-        for each in FASTAs:
-            basenames.append(os.path.basename(each))
-            fasta_name.append(re.sub(r'\..*', '', os.path.basename(each)))
-        
-        self.excel_stats.excel_dict["FASTA/s"] = ", ".join(basenames)
-        
-        # Concatenate FASTA list - FIXED: Use proper string formatting
-        joined_name = "_".join(fasta_name)
-        concatenated_TEMP = f'{joined_name}.temp'
-        concatenated_FASTA = f'{joined_name}.fasta'
-        
+        self.excel_stats.excel_dict["FASTA/s"] = ", ".join(os.path.basename(each) for each in FASTAs)
+
+        # Concatenate FASTA list, under a name that is not a file already in
+        # the working directory (the user's own reference given with -r).
+        concatenated_FASTA = concatenated_reference_name(FASTAs)
+        concatenated_TEMP = f'{concatenated_FASTA}.tmp'
+
         with open(concatenated_TEMP, 'wb') as wfd:
             for each in FASTAs:
                 with open(each, 'rb') as fd:
@@ -197,8 +204,8 @@ class vSNP3_Step1(Setup):
 
         # Platform detection.  This tested the MAXIMUM read length, so a single long
         # read in an Illumina library rerouted the whole sample to minimap2 and
-        # bcftools AND added +100 to every QUAL, which made those values
-        # incomparable to the 150/300 thresholds used downstream.
+        # bcftools, whose QUAL was then incomparable to the thresholds (now the
+        # long-read path writes the evidence QUAL; see vsnp3_longread.py).
         #
         # Average length is the right statistic - Illumina 2x300 averages ~300, ONT
         # well over 1000 - and the presence of an R2 file settles it outright,
@@ -229,53 +236,70 @@ class vSNP3_Step1(Setup):
 
         alignment = Alignment(SAMPLE_NAME=self.sample_name, FASTQ_R1=self.FASTQ_R1, FASTQ_R2=self.FASTQ_R2, reference=self.reference, nanopore=nanopore, gbk=self.gbk, assemble_unmap=self.assemble_unmap, debug=self.debug)
         alignment.run()
+        self.tool_output = list(getattr(alignment, 'tool_output', None) or [])
 
         # Group reporting.  Three outcomes, previously collapsed into two: a
         # failed lookup was reported as "group file not provided", which reads as
-        # a configuration choice rather than an error.
+        # a configuration choice rather than an error.  A reference type with no
+        # defining-SNP workbook is that configuration choice, and says so.
+        # Everything else is caught: this step only reports, and the _zc.vcf is
+        # already written, so no exception from it may end the run.
         if not self.reference_type:
             groups = "group file not provided"
         else:
             try:
                 group_reporter = GroupReporter(alignment.zero_coverage_vcf_file_path, self.reference_type)
                 groups = ", ".join(group_reporter.get_groups())
-            except (GroupLookupError, ValueError, KeyError, OSError) as e:
-                groups = f"group lookup FAILED: {e}"
+            except NoDefiningSnpWorkbook:
+                groups = "group file not provided"
+            except Exception as e:                                # noqa: BLE001
+                groups = f"group lookup FAILED: {str(e) or type(e).__name__}"
                 print(f'\n### {groups}\n')
         self.excel_stats.excel_dict['Groups'] = groups
 
         alignment.excel(self.excel_stats.excel_dict)
 
-        # FASTQ usability assessment
-        if alignment.zero_coverage.ave_coverage < 40 or alignment.DUPLICATION_RATIO > .80 or float(fastq_stats.R1.passQ20) < 50.0:
-            fastq_usability = 'Poor'
-            color_quality = bcolors.RED
-        elif alignment.zero_coverage.ave_coverage < 70 or alignment.DUPLICATION_RATIO > .10 or float(fastq_stats.R1.passQ30) < 70.0:
-            fastq_usability = 'Questionable'
-            color_quality = bcolors.YELLOW
-        else:
-            fastq_usability = 'Acceptable'
-            color_quality = bcolors.GREEN
-        
-        print(f'{bcolors.WHITE}{self.fastq_name}{bcolors.ENDC} {color_quality}{fastq_usability}{bcolors.ENDC} FASTQ Usability')
-        self.excel_stats.excel_dict['FASTQ Usability'] = fastq_usability
+        # Usability verdicts.  The limits live in vsnp3_version.py, and the
+        # verdict is reported with the measurement that set it, so that
+        # "Questionable" is never a bare word.  Shown in the HTML report only:
+        # vsnp3_file_setup.HTML_ONLY_KEYS keeps them out of the stats workbook.
+        zc = alignment.zero_coverage
+        fastq_usability, fastq_reason = fastq_usability_verdict(
+            depth=zc.ave_coverage, duplicate_ratio=alignment.DUPLICATION_RATIO,
+            q20_percent=fastq_stats.R1.passQ20, q30_percent=fastq_stats.R1.passQ30)
+        colors = {'Poor': bcolors.RED, 'Questionable': bcolors.YELLOW}
+        color_quality = colors.get(fastq_usability, bcolors.GREEN)
+        print(f'{bcolors.WHITE}{self.fastq_name}{bcolors.ENDC} {color_quality}{fastq_usability}{bcolors.ENDC} FASTQ Usability ({fastq_reason})')
+        self.excel_stats.excel_dict['FASTQ Usability'] = f'{fastq_usability} ({fastq_reason})'
 
-        # Reference usability assessment
-        if alignment.zero_coverage.genome_coverage < 0.95 or alignment.zero_coverage.percent_ref_with_zero_coverage > 1.0 or alignment.zero_coverage.percent_ref_with_good_snp_count > 0.09:
-            reference_usability = 'Poor'
-            color_quality = bcolors.RED
-            reference_usability_test = False
-        elif alignment.zero_coverage.genome_coverage < 0.975 or alignment.zero_coverage.percent_ref_with_zero_coverage > 0.5 or alignment.zero_coverage.percent_ref_with_good_snp_count > 0.03:
-            reference_usability = 'Questionable'
-            color_quality = bcolors.YELLOW
-            reference_usability_test = False
-        else:
-            reference_usability = 'Acceptable'
-            color_quality = bcolors.GREEN
-            reference_usability_test = True
-        
-        print(f'{bcolors.WHITE}{self.fastq_name}{bcolors.ENDC} {color_quality}{reference_usability}{bcolors.ENDC} Reference Usability')
-        self.excel_stats.excel_dict['Reference Usability'] = reference_usability
+        reference_usability, reference_reason = reference_usability_verdict(
+            genome_coverage=zc.genome_coverage,
+            zero_coverage_percent=zc.percent_ref_with_zero_coverage,
+            good_snp_percent=zc.percent_ref_with_good_snp_count)
+        reference_usability_test = reference_usability == 'Acceptable'
+        color_quality = colors.get(reference_usability, bcolors.GREEN)
+        print(f'{bcolors.WHITE}{self.fastq_name}{bcolors.ENDC} {color_quality}{reference_usability}{bcolors.ENDC} Reference Usability ({reference_reason})')
+        self.excel_stats.excel_dict['Reference Usability'] = f'{reference_usability} ({reference_reason})'
+
+        # A sample with no SNP passing the step 2 thresholds has an empty row
+        # in step 2.  Say why now, while the reads are at hand: mixed (AC=1)
+        # calls are the signature of a mixed or contaminated sample, and no
+        # call at all is a sample identical to the reference.  Decided on the
+        # step 2 definition (zc.step2_snp_count), not on "Quality SNPs", which
+        # counts any AC: a mixed sample with high-quality AC=1 calls has many
+        # quality SNPs, so this notice never appeared for it.
+        notice = no_snp_notice(getattr(zc, 'step2_snp_count', None),
+                               getattr(zc, 'ac1_count', 0), getattr(zc, 'ac2_snp_count', 0))
+        # A mixture can also have a few passing SNPs: a site where one strain's
+        # reads happen to dominate is called homozygous.  It is still flagged
+        # when its confident mixed calls outnumber those SNPs several times over
+        # (vsnp3_version.mixed_signature).
+        if not notice:
+            notice = mixed_sample_notice(getattr(zc, 'step2_snp_count', None),
+                                         getattr(zc, 'confident_ac1_count', None))
+        if notice:
+            print(f'\n### {self.sample_name}: {notice}\n')
+            self.report.add_notice(notice)
         
         # Store alignment results for reporting
         self.programs = alignment.programs
@@ -326,7 +350,7 @@ def get_system_info():
         try:
             # Try reading from /etc/os-release first
             if os.path.exists('/etc/os-release'):
-                with open('/etc/os-release', 'r') as f:
+                with open('/etc/os-release', 'r', encoding='utf-8', errors='replace') as f:
                     lines = f.readlines()
                     distro_id = ""
                     distro_version = ""
@@ -383,7 +407,7 @@ def get_system_info():
         # Fallback CPU info if py-cpuinfo is not available
         try:
             if os_name == "Linux":
-                with open('/proc/cpuinfo', 'r') as f:
+                with open('/proc/cpuinfo', 'r', encoding='utf-8', errors='replace') as f:
                     cpu_lines = f.readlines()
                 model_name = "Unknown"
                 cpu_count = 0
@@ -532,9 +556,13 @@ def get_program_versions():
     return python_programs
 
 
-def write_run_log(sample_name, args, alignment_vcf_run_summary, programs):
+def write_run_log(sample_name, args, alignment_vcf_run_summary, programs, tool_output=None):
     """
-    Write comprehensive run log with system info and program versions
+    Write comprehensive run log with system info and program versions.
+
+    tool_output: [(title, [lines])] of external tool output kept by the
+    alignment (a failed SPAdes run's last lines, freebayes-parallel's stderr),
+    written at the end under "Tool output".  Not part of the HTML report.
     """
     # Get system information
     system_info = get_system_info()
@@ -547,7 +575,10 @@ def write_run_log(sample_name, args, alignment_vcf_run_summary, programs):
     
     try:
         log_filename = f'{sample_name}_run_log.txt'
-        with open(log_filename, 'w') as run_log:
+        # Explicit encoding: the log carries tool command lines with the
+        # reference and reads paths in them, and under LC_ALL=C on Linux the
+        # default encoding is ASCII, so an accent in a path ended the run here.
+        with open(log_filename, 'w', encoding='utf-8', errors='replace') as run_log:
             print(f'\n{os.path.basename(__file__)} SET ARGUMENTS:', file=run_log)
             print(args, file=run_log)
             
@@ -585,12 +616,19 @@ def write_run_log(sample_name, args, alignment_vcf_run_summary, programs):
                 program_name = each.split(':')[0].strip() if ':' in each else each.split()[0].strip()
                 if program_name.lower() not in programs_already_reported:
                     print(each, file=run_log)
-                    
+
+            if tool_output:
+                print('\nTool output:', file=run_log)
+                for title, lines in tool_output:
+                    print(f'\n{title}:', file=run_log)
+                    for line in lines:
+                        print(f'  {line}', file=run_log)
+
     except Exception as e:
         print(f"Error writing to log file: {str(e)}")
         # Fallback to a default filename
         try:
-            with open("run_log.txt", 'w') as run_log:
+            with open("run_log.txt", 'w', encoding='utf-8', errors='replace') as run_log:
                 print('\nSystem Information:', file=run_log)
                 for info in system_info:
                     print(info, file=run_log)
@@ -633,11 +671,11 @@ if __name__ == "__main__": # execute if directly accessed by the interpreter
     parser = argparse.ArgumentParser(
         prog='vsnp3_step1.py', 
         formatter_class=argparse.RawDescriptionHelpFormatter, 
-        description=textwrap.dedent('''\
+        description=textwrap.dedent(f'''\
 
     ---------------------------------------------------------
     Conda:
-    conda install vsnp3=3.13 -c conda-forge -c bioconda
+    conda install vsnp3={__version__} -c conda-forge -c bioconda
     ---------------------------------------------------------
 
     When running samples through step1 and 2 of vSNP, or when running a routine analysis, 
@@ -656,12 +694,14 @@ if __name__ == "__main__": # execute if directly accessed by the interpreter
     Usage example:
     vsnp3_step1.py -r1 *_R1*.fastq.gz -r2 *_R2*.fastq.gz
 
-    When running a one-off dependencies can be provided explicitly.
+    When running a one-off dependencies can be provided explicitly: -r is the reference
+    FASTA and -b its GenBank file.  (-f is different: it converts a FASTA into synthetic
+    reads and analyses those.)
 
     Usage example:
-    vsnp3_step1.py -r1 *_R1*.fastq.gz -r2 *_R2*.fastq.gz -f *fasta -b *gbk
+    vsnp3_step1.py -r1 *_R1*.fastq.gz -r2 *_R2*.fastq.gz -r *fasta -b *gbk
     or
-    vsnp3_step1.py -r1 ../myfastqs/*_R1*.fastq.gz -r2 ../myfastqs/*_R2*.fastq.gz -f ../myreference/*fasta -b ../myreference/*gbk
+    vsnp3_step1.py -r1 ../myfastqs/*_R1*.fastq.gz -r2 ../myfastqs/*_R2*.fastq.gz -r ../myreference/*fasta -b ../myreference/*gbk
 
     At completion of running script it is recommended to store sample folders by reference.  
     For each reference there should be a "step1" and "step2" subfolder.  These sample folders 
@@ -674,13 +714,13 @@ if __name__ == "__main__": # execute if directly accessed by the interpreter
     parser.add_argument('-n', '--SAMPLE_NAME', action='store', dest='SAMPLE_NAME', required=False, help='Force output files to this sample name')
     parser.add_argument('-r1', '--FASTQ_R1', action='store', dest='FASTQ_R1', required=False, help='Provide R1 FASTQ gz file.  A single read file can also be supplied to this option')
     parser.add_argument('-r2', '--FASTQ_R2', action='store', dest='FASTQ_R2', required=False, default=None, help='Optional: provide R2 FASTQ gz file')
-    parser.add_argument('-f', '--FASTAtoFASTQ', action='store', dest='FASTAtoFASTQ', required=False, help='Input a FASTA file, convert to paired FASTQ files, and run.')
+    parser.add_argument('-f', '--FASTAtoFASTQ', action='store', dest='FASTAtoFASTQ', required=False, help='Input a FASTA file to be analysed as a sample: it is converted to synthetic paired FASTQ files and run.  This is not the reference; the reference FASTA is -r.')
     parser.add_argument('-r', '--FASTA', nargs='*', dest='FASTA', required=False, help='FASTA file to be used as reference.  Multiple can be specified with wildcard')
     parser.add_argument('-b', '--gbk', nargs='*', dest='gbk', required=False, default=None, help='Optional: gbk to annotate VCF file.  Multiple can be specified with wildcard')
     parser.add_argument('-t', '--reference_type', action='store', dest='reference_type', required=False, default=None, help="Optional: Provide directory name with FASTA and GBK file/s")
-    parser.add_argument('-p', '--nanopore', action='store_true', dest='nanopore', default=False, help='if true run alignment optimized for nanopore reads')
+    parser.add_argument('-p', '--nanopore', action='store_true', dest='nanopore', default=False, help='nanopore (long-read) reads: minimap2 alignment, bcftools calling and the vSNP3 long-read evidence QUAL, so the VCF is read by the same thresholds as an Illumina one.  Chosen automatically for single-end reads averaging more than 701 bases; this flag forces it')
     parser.add_argument('-o', '--output_dir', action='store', dest='output_dir', required=False, default=None, help="Optional: Provide a name.  This name will be a directory output files are written to.  Name can be a directory path, but doesn't have to be.")
-    parser.add_argument('-assemble_unmap', '--assemble_unmap', action='store_true', dest='assemble_unmap', help='Optional: skip assembly of unmapped reads.   See also vsnp3_assembly.py')
+    parser.add_argument('-assemble_unmap', '--assemble_unmap', action='store_true', dest='assemble_unmap', help='Optional: assemble the unmapped reads with SPAdes (not done by default).   See also vsnp3_assembly.py')
     parser.add_argument('-spoligo', '--spoligo', action='store_true', dest='spoligo', help='Optional: get spoligotype if TB complex.  See also vsnp3_spoligotype.py')
     parser.add_argument('-d', '--debug', action='store_true', dest='debug', help='keep spades output directory')
     parser.add_argument('-v', '--version', action='version', version=f'{os.path.basename(__file__)}: version {__version__}')
@@ -693,6 +733,15 @@ if __name__ == "__main__": # execute if directly accessed by the interpreter
 
     if not args.FASTQ_R1 and not args.FASTAtoFASTQ:
         parser.error('No FASTQ or FASTA provided.  Use -r1 or -f option')
+
+    # -f with -b and no reference is only ever the reference FASTA given under
+    # the wrong flag (older help text and wrappers showed "-f *fasta -b *gbk").
+    # Left alone, it converts the reference genome to reads and aligns them to
+    # whichever reference sourmash picks, with no error.
+    if args.FASTAtoFASTQ and args.gbk and not (args.FASTA or args.reference_type):
+        parser.error('-f/--FASTAtoFASTQ converts a FASTA into reads to analyse as a sample; '
+                     'it is not the reference.  With -b/--gbk, give the reference FASTA '
+                     'with -r/--FASTA (or a reference type with -t).')
 
     # Handle FASTA to FASTQ conversion
     if args.FASTAtoFASTQ:
@@ -746,8 +795,21 @@ if __name__ == "__main__": # execute if directly accessed by the interpreter
         output_dir = args.output_dir
         output_dir = os.path.expanduser(output_dir)
         output_dir = os.path.abspath(output_dir)
+        args.output_dir = output_dir
+        # Every path argument absolute before the chdir below.  A relative
+        # -r ../ref/x.fasta or -b ../ref/x.gbk passed validation from the
+        # original directory and was then looked up from output_dir, where
+        # concat_fasta raised FileNotFoundError.
+        for name in ('FASTQ_R1', 'FASTQ_R2', 'FASTAtoFASTQ'):
+            value = getattr(args, name, None)
+            if value:
+                setattr(args, name, os.path.abspath(os.path.expanduser(value)))
+        for name in ('FASTA', 'gbk'):
+            value = getattr(args, name, None)
+            if value:
+                setattr(args, name, [os.path.abspath(os.path.expanduser(each)) for each in value])
         os.makedirs(output_dir, exist_ok=True)
-        
+
         if args.FASTQ_R1:
             shutil.copy(args.FASTQ_R1, output_dir)
         if args.FASTQ_R2:
@@ -771,7 +833,8 @@ if __name__ == "__main__": # execute if directly accessed by the interpreter
         vsnp.run()
         
         # Write comprehensive log file
-        write_run_log(vsnp.sample_name, args, vsnp.alignment_vcf_run_summary, vsnp.programs)
+        write_run_log(vsnp.sample_name, args, vsnp.alignment_vcf_run_summary, vsnp.programs,
+                      tool_output=getattr(vsnp, 'tool_output', None))
         
     except Exception as e:
         print(f"Error during vSNP3 Step1 execution: {str(e)}")

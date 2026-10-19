@@ -47,11 +47,14 @@ class Downloader():
             file_download = f"datasets download genome accession {gca_accession} --filename {self.sample_name}.zip --include genome"
         os.system(file_download)
         count = 1
-        while True and count < 5:
+        extracted = False
+        last_error = None
+        while count < 5:
             try:
                 with ZipFile(f"{self.sample_name}.zip", 'r') as zf:
                     zf.extractall()
-            except (FileNotFoundError, PermissionError, Exception) as e:
+            except Exception as e:                           # noqa: BLE001
+                last_error = e
                 count += 1
                 print(f"Download try {count} in progress")
                 for secs in range(30, 0, -1):
@@ -60,10 +63,22 @@ class Downloader():
                 os.system(file_download)
                 continue
             else:
+                extracted = True
                 break
+        if not extracted:
+            # This used to fall through silently; the first sign of trouble was
+            # an AttributeError on self.acc from excel(), well away from the cause.
+            raise RuntimeError(
+                f'{gca_accession}: download failed after {count - 1} attempts '
+                f'({type(last_error).__name__}: {last_error}).  Check the accession, '
+                f'the network, and that the datasets tool is installed.')
 
         # Use list comprehension instead of for loop for better readability
         jsonl_files = list(Path('.').rglob('*_report.jsonl'))
+        if not jsonl_files:
+            raise RuntimeError(
+                f'{gca_accession}: the download holds no *_report.jsonl metadata file, '
+                f'so the genome cannot be named.  Is the accession a GCA/GCF assembly?')
         if jsonl_files:
             jsonl = str(Path(cwd) / jsonl_files[0])
             df = pd.read_json(jsonl, typ='series')
@@ -215,7 +230,11 @@ if __name__ == "__main__":  # execute if directly access by the interpreter
     print(args)
     print("\n")
 
-    downloader = Downloader(gca_accession=args.accession, annotation_file=args.gfiles, rename=args.rename)
+    try:
+        downloader = Downloader(gca_accession=args.accession, annotation_file=args.gfiles, rename=args.rename)
+    except RuntimeError as e:
+        print(f'\n### {e}\n')
+        sys.exit(1)
 
     # Excel Stats
     excel_stats = Excel_Stats(downloader.sample_name)

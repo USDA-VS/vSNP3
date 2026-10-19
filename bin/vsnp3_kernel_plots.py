@@ -7,6 +7,7 @@ import re
 import argparse
 import locale
 import textwrap
+import shutil
 import subprocess
 import numpy as np
 import pandas as pd
@@ -200,6 +201,13 @@ if __name__ == "__main__":
     parser.add_argument('-v', '--version', action='version', version=f'{os.path.basename(__file__)}: version {__version__}')
 
     args = parser.parse_args()
+
+    # snp-dists is a program, not an import: a run requirement of the conda recipe
+    # that an environment built some other way may lack.  Say so before any work.
+    if shutil.which('snp-dists') is None:
+        sys.exit(f"{os.path.basename(__file__)}: snp-dists not found on PATH.  It is part of the "
+                 "vsnp3 conda package; in another environment install it with "
+                 "`conda install -c conda-forge -c bioconda snp-dists`.")
 
     try:
         kernel_plot = Kernel_Plot(

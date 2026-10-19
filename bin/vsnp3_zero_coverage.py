@@ -1,8 +1,11 @@
 #!/usr/bin/env python
 
 from vsnp3_version import __version__
+from vsnp3_version import QUAL_THRESHOLD, MQ_THRESHOLD, AC_HOMOZYGOUS, AC_HETEROZYGOUS
+from vsnp3_version import mixed_signature, MIXED_AC1_RATIO
 
 import os
+import io
 import re
 import shutil
 import locale
@@ -22,19 +25,153 @@ from vsnp3_file_setup import Excel_Stats
 os.environ["LC_ALL"] = "C"
 locale.setlocale(locale.LC_ALL, "C")
 
+
+def step2_snp_counts(vcf_df):
+    '''
+    (single-base AC=2 calls, those of them step 2 takes as SNP positions).
+
+    The step 2 test at its default thresholds, as vsnp3_step2.py reads a
+    record and Group._passing selects it: single-base REF and ALT, AC=2, QUAL
+    above QUAL_THRESHOLD and MQ at least MQ_THRESHOLD, with QUAL and MQ
+    truncated to integers and freebayes' MQM read as MQ.  A record missing
+    any of these values does not pass.  tests/test_step2_inputs.py checks
+    this agrees with Group._passing.
+    '''
+    if vcf_df.empty:
+        return 0, 0
+    info = vcf_df['INFO'].astype(str).str.replace(';MQM=', ';MQ=', regex=False)
+    ac = pd.to_numeric(info.str.extract(r'(?:^|;)AC=([^;]*)', expand=False), errors='coerce')
+    mq = np.trunc(pd.to_numeric(info.str.extract(r'(?:^|;)MQ=([^;]*)', expand=False),
+                                errors='coerce'))
+    qual = np.trunc(pd.to_numeric(vcf_df['QUAL'], errors='coerce'))
+    snp = ((vcf_df['REF'].astype(str).str.len() == 1) & (vcf_df['ALT'].astype(str).str.len() == 1)
+           & (ac == AC_HOMOZYGOUS))
+    passing = snp & (qual > QUAL_THRESHOLD) & (mq >= MQ_THRESHOLD)
+    return int(snp.sum()), int(passing.sum())
+
+
+def confident_mixed_count(vcf_df):
+    '''
+    Single-base AC=1 calls with QUAL >= QUAL_THRESHOLD and MQ >= MQ_THRESHOLD:
+    the confident mixed calls the mixed-sample signature counts
+    (vsnp3_version.mixed_signature).  Read the same way as step2_snp_counts.
+    '''
+    if vcf_df.empty:
+        return 0
+    info = vcf_df['INFO'].astype(str).str.replace(';MQM=', ';MQ=', regex=False)
+    ac = pd.to_numeric(info.str.extract(r'(?:^|;)AC=([^;]*)', expand=False), errors='coerce')
+    mq = np.trunc(pd.to_numeric(info.str.extract(r'(?:^|;)MQ=([^;]*)', expand=False),
+                                errors='coerce'))
+    qual = np.trunc(pd.to_numeric(vcf_df['QUAL'], errors='coerce'))
+    mixed = ((vcf_df['REF'].astype(str).str.len() == 1) & (vcf_df['ALT'].astype(str).str.len() == 1)
+             & (ac == AC_HETEROZYGOUS) & (qual >= QUAL_THRESHOLD) & (mq >= MQ_THRESHOLD))
+    return int(mixed.sum())
+
+
+def mixed_sample_notice(step2_snp_count, confident_ac1):
+    '''
+    The step 1 report notice for a sample that has SNPs passing the step 2
+    thresholds but whose confident mixed calls outnumber them by more than
+    MIXED_AC1_RATIO to 1: the signature of a mixture of strains.  None when the signature is absent or the counts
+    are unknown.  A sample with no passing SNP gets no_snp_notice instead.
+    '''
+    if not step2_snp_count or confident_ac1 is None:
+        return None
+    if not mixed_signature(step2_snp_count, confident_ac1):
+        return None
+    return (f'Possible mixed sample: {confident_ac1:,} confident mixed call(s) (AC=1, '
+            f'QUAL >= {QUAL_THRESHOLD}, MQ >= {MQ_THRESHOLD}) against {step2_snp_count:,} '
+            f'SNP(s) passing the step 2 thresholds. A single strain rarely has more than '
+            f'{MIXED_AC1_RATIO:g} mixed calls per SNP; two strains together do. The sample is '
+            f'highlighted in the Groupings table of the step 2 summary report.')
+
+
+def sample_name_for(bam, sample_name=None):
+    '''
+    The sample name the _zc.vcf is written under: the caller's when it gives
+    one, otherwise the BAM file name up to its first '_' or '.'.
+
+    The name used to be re-derived from the BAM argument every time, so
+    -n/--SAMPLE_NAME with an underscore or a dot in it (B26-0290_S3) named the
+    BAM, the report and the statistics B26-0290_S3 but the VCF B26-0290, and two
+    forced names sharing a prefix collided in step 2.  From the command line
+    the whole path was used, so vsnp3_zero_coverage.py -b out/x_nodup.bam wrote
+    out/x_zc.vcf... except that re.sub left 'out/x', a path, as the name.
+    '''
+    if sample_name:
+        return sample_name
+    return re.sub('[_.].*', '', os.path.basename(bam))
+
+
+VCF_COLUMNS = ["CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT", "Sample"]
+
+
+def read_vcf_lines(vcf):
+    '''
+    (header lines, record lines) of a VCF, header lines being those that start
+    with '#', each with its line ending removed.  Non-UTF-8 bytes are replaced,
+    not fatal: freebayes writes the reference path into the header.
+    '''
+    header, body = [], []
+    with open(vcf, 'r', encoding='utf-8', errors='replace') as f:
+        for line in f:
+            line = line.rstrip('\r\n')
+            if line.startswith('#'):
+                header.append(line)
+            elif line.strip():
+                body.append(line)
+    return header, body
+
+
+def vcf_body_frame(body_lines):
+    '''
+    The records as a DataFrame with VCF_COLUMNS.  The header is skipped by line
+    here, not with read_csv(comment='#'), which cut every record short at a '#'
+    anywhere in the line (a sample or contig name, an INFO value).
+    '''
+    if not body_lines:
+        return pd.DataFrame(columns=VCF_COLUMNS)
+    return pd.read_csv(io.StringIO('\n'.join(body_lines) + '\n'), sep='\t',
+                       header=None, names=VCF_COLUMNS)
+
+
+def no_snp_notice(step2_snp_count, ac1_count, ac2_snp_count):
+    '''
+    The step 1 report notice for a sample none of whose calls step 2 will
+    take as a SNP position, or None when some will (or the count is unknown).
+    '''
+    if step2_snp_count != 0:
+        return None
+    ac1 = ac1_count or 0
+    ac2 = ac2_snp_count or 0
+    rule = (f'the step 2 thresholds (single-base, AC=2, QUAL > {QUAL_THRESHOLD}, '
+            f'MQ >= {MQ_THRESHOLD})')
+    if ac1 > 0:
+        return (f'No SNP passed {rule}, but {ac1:,} position(s) '
+                f'were called mixed (AC=1). This usually means a mixed or '
+                f'contaminated sample. In step 2 this sample carries no SNPs of '
+                f'its own and is flagged in the summary report.')
+    if ac2 > 0:
+        return (f'No SNP passed {rule}: all {ac2:,} single-base AC=2 call(s) '
+                f'have lower QUAL or MQ. In step 2 this sample carries no SNPs '
+                f'of its own.')
+    return (f'No SNP passed {rule} and no position was called '
+            f'mixed: this sample matches the reference wherever it has coverage.')
+
+
 class Zero_Coverage(Setup):
     ''' 
     Class to identify zero coverage regions in BAM alignments and 
     incorporate these into VCF files
     '''
-    def __init__(self, FASTA=None, bam=None, vcf=None, debug=False):
+    def __init__(self, FASTA=None, bam=None, vcf=None, debug=False, sample_name=None):
 
         def count_ac1_positions(vcf_file):
             """Count positions with AC=1 in VCF file"""
             ac1_count = 0
-            
+
             try:
-                with open(vcf_file, 'r') as f:
+                with open(vcf_file, 'r', encoding='utf-8', errors='replace') as f:
                     for line in f:
                         # Skip header lines
                         if line.startswith('#'):
@@ -67,7 +204,7 @@ class Zero_Coverage(Setup):
 
         Setup.__init__(self, FASTA=FASTA, debug=debug)
         self.print_run_time('Zero Coverage')
-        self.sample_name = re.sub('[_.].*', '', bam)
+        self.sample_name = sample_name_for(bam, sample_name)
         self.reference_name = re.sub('[_.].*', '', os.path.basename(FASTA))
         # Per-contig depth as numpy arrays, streamed.
         #
@@ -84,8 +221,9 @@ class Zero_Coverage(Setup):
         # every position rather than only covered ones, so the all-zeros dict and
         # the merge are unnecessary.
         try:
-            contig_lengths = {record.id: len(record.seq)
-                              for record in SeqIO.parse(FASTA, "fasta")}
+            with open(FASTA, encoding='utf-8', errors='replace') as fasta_handle:
+                contig_lengths = {record.id: len(record.seq)
+                                  for record in SeqIO.parse(fasta_handle, "fasta")}
         except Exception as e:
             print(f"Error parsing FASTA file {FASTA}: {e}")
             raise
@@ -165,14 +303,15 @@ class Zero_Coverage(Setup):
         else:
             genome_coverage = 0.0
         
-        # Use context manager for file operations with better error handling
+        # One read of the VCF: the header lines are kept for the _zc.vcf, the
+        # records go into the frame.
+        vcf_header_lines = []
         try:
-            vcf_df = pd.read_csv(vcf, sep='\t', header=None, 
-                              names=["CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT", "Sample"], 
-                              comment='#')
+            vcf_header_lines, vcf_body_lines = read_vcf_lines(vcf)
+            vcf_df = vcf_body_frame(vcf_body_lines)
         except pd.errors.EmptyDataError:
             # Handle empty VCF file
-            vcf_df = pd.DataFrame(columns=["CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT", "Sample"])
+            vcf_df = pd.DataFrame(columns=VCF_COLUMNS)
         except Exception as e:
             print(f"Error reading VCF file {vcf}: {e}")
             raise
@@ -190,7 +329,25 @@ class Zero_Coverage(Setup):
         except Exception as e:
             print(f"Error calculating good SNP count: {e}")
             good_snp_count = 0
-            
+
+        # "Quality SNPs" above counts any AC, so a mixed sample whose AC=1 calls
+        # are of high quality has plenty of them and none that step 2 will use.
+        # The step 1 no-SNP notice is decided on the step 2 definition instead.
+        try:
+            ac2_snp_count, step2_count = step2_snp_counts(vcf_df)
+            print(f"\tSNPs passing the step 2 thresholds: {step2_count:,} "
+                  f"(of {ac2_snp_count:,} single-base AC=2 calls)")
+        except Exception as e:                                   # noqa: BLE001
+            print(f"Error counting SNPs by the step 2 thresholds: {e}")
+            ac2_snp_count = step2_count = None
+        try:
+            confident_ac1 = confident_mixed_count(vcf_df)
+            print(f"\tConfident mixed calls (AC=1, QUAL >= {QUAL_THRESHOLD}, "
+                  f"MQ >= {MQ_THRESHOLD}): {confident_ac1:,}")
+        except Exception as e:                                   # noqa: BLE001
+            print(f"Error counting confident mixed calls: {e}")
+            confident_ac1 = None
+
         # Handle division by zero
         if reference_length > 0:
             percent_ref_with_good_snp_count = good_snp_count / reference_length * 100
@@ -198,16 +355,19 @@ class Zero_Coverage(Setup):
             percent_ref_with_good_snp_count = 0
             
         zero_coverage_vcf = f'{self.sample_name}_zc.vcf'
-        
+        # Named for the sample: two samples run side by side in one directory
+        # used to share v_header.csv and v_annotated_body.csv, so a _zc.vcf
+        # could carry the other sample's header.
+        header_csv = f'{self.sample_name}_v_header.csv'
+        body_csv = f'{self.sample_name}_v_annotated_body.csv'
+
         if total_zero_coverage > 0:
             try:
                 # Write header
-                with open('v_header.csv', 'w') as header_out:
-                    with open(vcf, 'r') as fff:
-                        for line in fff:
-                            if re.search('^#', line):
-                                print(line.strip(), file=header_out)
-                
+                with open(header_csv, 'w', encoding='utf-8', errors='replace') as header_out:
+                    for line in vcf_header_lines:
+                        print(line.strip(), file=header_out)
+
                 # Create a new dataframe for zero coverage positions
                 # zero_positions already holds (chrom, position) pairs, so there is no
                 # 'chrom-pos' string to split back apart.  The old form did
@@ -235,20 +395,20 @@ class Zero_Coverage(Setup):
                     combined_df = combined_df.sort_values(['CHROM', 'POS'])
                     
                     # Write the combined data to the output file
-                    combined_df.to_csv('v_annotated_body.csv', sep='\t', header=False, index=False)
+                    combined_df.to_csv(body_csv, sep='\t', header=False, index=False)
                 else:
                     # If no zero positions, just write the original VCF data
-                    vcf_df.to_csv('v_annotated_body.csv', sep='\t', header=False, index=False)
-                
+                    vcf_df.to_csv(body_csv, sep='\t', header=False, index=False)
+
                 # Use context manager for safer file operations
                 with open(zero_coverage_vcf, "wb") as outfile:
-                    for cf in ['v_header.csv', 'v_annotated_body.csv']:
+                    for cf in [header_csv, body_csv]:
                         if os.path.exists(cf):
                             with open(cf, "rb") as infile:
                                 outfile.write(infile.read())
-                
+
                 # Clean up temporary files
-                for temp_file in ['v_header.csv', 'v_annotated_body.csv']:
+                for temp_file in [header_csv, body_csv]:
                     if os.path.exists(temp_file):
                         os.remove(temp_file)
                         
@@ -262,7 +422,7 @@ class Zero_Coverage(Setup):
                 # those positions exist, so writing the file anyway is not an option.
                 if os.path.exists(zero_coverage_vcf):
                     os.remove(zero_coverage_vcf)
-                for temp_file in ['v_header.csv', 'v_annotated_body.csv']:
+                for temp_file in [header_csv, body_csv]:
                     if os.path.exists(temp_file):
                         os.remove(temp_file)
                 raise RuntimeError(
@@ -279,6 +439,9 @@ class Zero_Coverage(Setup):
         self.reference_length = reference_length
         self.zero_coverage_vcf = zero_coverage_vcf
         self.good_snp_count = good_snp_count
+        self.ac2_snp_count = ac2_snp_count
+        self.step2_snp_count = step2_count
+        self.confident_ac1_count = confident_ac1
         self.percent_ref_with_good_snp_count = percent_ref_with_good_snp_count
         self.ave_coverage = ave_coverage
         self.genome_coverage = genome_coverage
@@ -315,6 +478,7 @@ if __name__ == "__main__":  # execute if directly access by the interpreter
     parser.add_argument('-r', '--reference', action='store', dest='FASTA', required=True, default=None, help="Reference used to build alignment")
     parser.add_argument('-b', '--bam', action='store', dest='bam', required=False, default=None, help='bam file used to make VCF')
     parser.add_argument('-c', '--vcf', action='store', dest='vcf', required=False, default=None, help='VCF file')
+    parser.add_argument('-n', '--SAMPLE_NAME', action='store', dest='SAMPLE_NAME', required=False, default=None, help='Optional: name the _zc.vcf for this sample; default is the BAM file name up to its first "_" or "."')
     parser.add_argument('-d', '--debug', action='store_true', dest='debug', default=False, help='keep temp file')
     parser.add_argument('-v', '--version', action='version', version=f'{os.path.basename(__file__)}: version {__version__}')
     args = parser.parse_args()
@@ -332,7 +496,8 @@ if __name__ == "__main__":  # execute if directly access by the interpreter
     print("\n")
 
     try:
-        zero_coverage = Zero_Coverage(FASTA=args.FASTA, bam=args.bam, vcf=args.vcf, debug=args.debug)
+        zero_coverage = Zero_Coverage(FASTA=args.FASTA, bam=args.bam, vcf=args.vcf, debug=args.debug,
+                                      sample_name=args.SAMPLE_NAME)
 
         # Excel Stats
         excel_stats = Excel_Stats(zero_coverage.sample_name)

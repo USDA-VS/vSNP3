@@ -1,10 +1,12 @@
 #!/usr/bin/env python
 
 from vsnp3_version import __version__
+from vsnp3_version import FASTQ_USABILITY, REFERENCE_USABILITY
 
 import os
 import shutil
 import re
+import time
 import locale
 import logging
 import pandas as pd
@@ -158,6 +160,59 @@ class Setup:
         now = datetime.now()
         print('{}{}{}'.format(bcolors.WHITE, now.strftime("%Y-%m-%d %H:%M:%S"), bcolors.ENDC))
 
+
+def format_elapsed(seconds):
+    '''"2 hours 5 minutes 9 seconds", with zero hours and minutes left out.'''
+    total = int(round(seconds))
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    parts = []
+    if hours:
+        parts.append(f'{hours} hour{"s" if hours != 1 else ""}')
+    if minutes:
+        parts.append(f'{minutes} minute{"s" if minutes != 1 else ""}')
+    parts.append(f'{secs} second{"s" if secs != 1 else ""}')
+    return ' '.join(parts)
+
+
+class PhaseTimer:
+    '''
+    Wall-clock time per named phase of a run, in the order the phases ran.
+
+    Monotonic, so a clock adjustment during a 13-hour run cannot move the
+    numbers.  started_at is the wall-clock start for the report; elapsed is
+    read at the moment the report is written, not before, so it covers
+    everything that ran.
+    '''
+
+    def __init__(self):
+        self.started_at = datetime.now()
+        self._start = time.monotonic()
+        self._last = self._start
+        self.phases = []            # [(name, seconds)]
+
+    def mark(self, name):
+        '''Close the phase that began at the previous mark (or at the start).'''
+        now = time.monotonic()
+        self.phases.append((name, now - self._last))
+        self._last = now
+
+    def absorb(self, phases):
+        '''Take over phases timed elsewhere, then continue from now.'''
+        self.phases.extend(phases)
+        self._last = time.monotonic()
+
+    @property
+    def elapsed(self):
+        return time.monotonic() - self._start
+
+    def print(self):
+        width = max((len(name) for name, _ in self.phases), default=10)
+        print('\nTime by phase:')
+        for name, seconds in self.phases:
+            print(f'  {name:<{width}}  {format_elapsed(seconds)}')
+        print(f'  {"total":<{width}}  {format_elapsed(self.elapsed)}')
+
 # Sections, in report order.  (title, [(label, excel_dict key), ...])
 # Keys absent from excel_dict are skipped, and a section with no present keys is
 # omitted entirely -- so a run without spoligotyping or assembly simply has no
@@ -185,9 +240,14 @@ SECTIONS = [
         ('Percent of reference with zero coverage', 'Percent Ref with Zero Coverage'),
     ]),
     ('SNPs', [
+        ('SNP caller', 'SNP Caller'),
         ('Quality SNPs', 'Quality SNPs'),
         ('Ambiguous SNPs', 'Ambiguous SNPs'),
         ('Defining SNP groups', 'Groups'),
+        # Long-read (nanopore) samples only; absent keys are not shown.
+        ('Long-read error rate', 'Long-read Error Rate'),
+        ('Long-read evidence QUAL', 'Long-read QUAL Model'),
+        ('Long-read calls limited to N', 'Long-read Calls Limited to N'),
     ]),
     ('Spoligotype', [
         ('SB number', 'Spoligotype SB Number'),
@@ -309,6 +369,7 @@ _TEMPLATE_SOURCE = '''<!doctype html>
           border:1px solid var(--line); border-radius:10px; padding:.9rem 1rem; }
   .tile .k { color:var(--muted); font-size:.74rem; text-transform:uppercase; letter-spacing:.06em; }
   .tile .v { font-size:1.45rem; font-weight:600; margin-top:.3rem; word-break:break-word; }
+  .tile .n { color:var(--muted); font-size:.74rem; margin-top:.25rem; }
   .tile.good { background:var(--good-bg); border-color:var(--good); }
   .tile.warn { background:var(--warn-bg); border-color:var(--warn); }
   .tile.bad  { background:var(--bad-bg);  border-color:var(--bad); }
@@ -391,6 +452,7 @@ _TEMPLATE_SOURCE = '''<!doctype html>
     <div class="tile {{ t.cls }}">
       <div class="k">{{ t.label }}</div>
       <div class="v">{{ t.value }}</div>
+      {% if t.note %}<div class="n">{{ t.note }}</div>{% endif %}
     </div>
     {% endfor %}
   </div>
@@ -589,8 +651,12 @@ class HtmlReport:
                                    ('Reference Usability', 'Reference usability')):
             value = stats.get(verdict_key)
             if value:
-                tiles.append({'label': label, 'value': value,
-                              'cls': VERDICT_CLASS.get(str(value).strip().lower(), '')})
+                # "Questionable (average depth 35.2x < 40.0x)": the verdict is
+                # the tile value, the measurement that set it is the note.
+                word, _, note = str(value).strip().partition(' (')
+                tiles.append({'label': label, 'value': word,
+                              'note': note.rstrip(')') if note else '',
+                              'cls': VERDICT_CLASS.get(word.strip().lower(), '')})
         for key, label in (('Average Depth', 'Average depth'),
                            ('Genome with Coverage', 'Genome with coverage'),
                            ('Quality SNPs', 'Quality SNPs')):
@@ -714,6 +780,94 @@ class HtmlReport:
         return value
 
 
+# Workers a pool may start when VSNP3_MAX_CPUS is unset.  The vSNP GUI's
+# install step has capped vsnp3's pools at this value since 2026-05; the
+# number comes from a 128-core shared server where cpu_count / 1.2 started
+# 106 processes.  A pool larger than this gains nothing here: reading is I/O
+# bound, and RAxML concurrency is limited separately (vsnp3_fasta_to_snps_table).
+DEFAULT_MAX_WORKERS = 32
+
+
+def worker_count(tasks=None):
+    '''
+    Size of a worker pool: cpu_count / 1.2, capped by VSNP3_MAX_CPUS when it is
+    set to a positive whole number and by DEFAULT_MAX_WORKERS otherwise, and
+    never more than tasks when given.
+
+    cpu_count() reports the machine, not the allocation.  Inside an 8-core job
+    on a 64-core node, or on a 128-core shared server, cpu_count / 1.2 starts
+    far more processes than the run was given, and each one holds its share of
+    the VCF frames -- a 1,951-sample step 2 in a 32 GB session was killed with
+    no traceback.  The vSNP GUI's suite launcher passes the session's core
+    budget as VSNP3_MAX_CPUS; vsnp3_fasta_to_snps_table.py reads the same
+    variable to limit concurrent RAxML runs.  Until 3.37 only that file read
+    it, and the GUI's install step rewrote the pool-size expression in
+    vsnp3_step2.py and vsnp3_group_on_defining_snps.py to
+    min(cpu_count / 1.2, VSNP3_MAX_CPUS or 32); this is that expression, so a
+    3.37 install behaves as the patched 3.36 installs did.
+    '''
+    count = max(1, int(multiprocessing.cpu_count() / 1.2))
+    try:
+        cap = int(str(os.environ.get('VSNP3_MAX_CPUS') or '').strip() or 0)
+    except ValueError:
+        cap = 0
+    count = min(count, cap if cap > 0 else DEFAULT_MAX_WORKERS)
+    if tasks is not None:
+        count = min(count, max(1, int(tasks)))
+    return max(1, count)
+
+
+# Shown as verdict tiles in the step 1 HTML report, never written to the stats
+# workbook.  The workbooks are merged across samples and sorted on, and a one
+# word judgement next to the measurements it was derived from is not a
+# measurement.  The report shows the verdict with the threshold that set it.
+HTML_ONLY_KEYS = ('FASTQ Usability', 'Reference Usability')
+
+
+def _usability(limits, checks):
+    '''
+    (verdict, reason) from a limits table and the measurements.
+
+    checks: key -> (value, crosses_when_below, label, format).  The first
+    limit crossed decides, Poor before Questionable, in the order the limits
+    are written in vsnp3_version.py.
+    '''
+    for verdict in ('poor', 'questionable'):
+        for key, limit in limits[verdict].items():
+            if key not in checks:
+                continue
+            value, below, label, fmt = checks[key]
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                continue
+            if (value < limit) if below else (value > limit):
+                op = '<' if below else '>'
+                return verdict.capitalize(), f'{label} {fmt.format(value)} {op} {fmt.format(limit)}'
+    return 'Acceptable', 'all limits met'
+
+
+def fastq_usability_verdict(depth, duplicate_ratio, q20_percent, q30_percent):
+    '''FASTQ usability as (verdict, reason), limits from FASTQ_USABILITY.'''
+    checks = {
+        'depth': (depth, True, 'average depth', '{:.1f}x'),
+        'duplicate_ratio': (duplicate_ratio, False, 'duplicate reads', '{:.0%}'),
+        'q20_percent': (q20_percent, True, 'reads passing Q20', '{:.1f}%'),
+        'q30_percent': (q30_percent, True, 'reads passing Q30', '{:.1f}%'),
+    }
+    return _usability(FASTQ_USABILITY, checks)
+
+
+def reference_usability_verdict(genome_coverage, zero_coverage_percent, good_snp_percent):
+    '''Reference usability as (verdict, reason), limits from REFERENCE_USABILITY.'''
+    checks = {
+        'genome_coverage': (genome_coverage, True, 'reference with coverage', '{:.1%}'),
+        'zero_coverage_percent': (zero_coverage_percent, False, 'reference with zero coverage', '{:.2f}%'),
+        'good_snp_percent': (good_snp_percent, False, 'quality SNPs, percent of reference', '{:.3f}%'),
+    }
+    return _usability(REFERENCE_USABILITY, checks)
+
+
 class Excel_Stats:
 
     def __init__(self, sample_name):
@@ -723,10 +877,11 @@ class Excel_Stats:
         excel_dict = {}
         excel_dict['sample'] = sample_name
         excel_dict['date'] = date_stamp
-        self.excel_dict = excel_dict 
+        self.excel_dict = excel_dict
 
     def post_excel(self,):
-        df = pd.DataFrame.from_dict(self.excel_dict, orient='index').T
+        rows = {k: v for k, v in self.excel_dict.items() if k not in HTML_ONLY_KEYS}
+        df = pd.DataFrame.from_dict(rows, orient='index').T
         df = df.set_index('sample')
         df.to_excel(self.excel_filename)
 

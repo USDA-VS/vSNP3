@@ -22,6 +22,7 @@ Two rules here:
 import os
 import shlex
 import subprocess
+import threading
 
 from vsnp3_version import __version__          # noqa: F401  re-exported for callers
 
@@ -46,10 +47,15 @@ class ExternalToolError(RuntimeError):
         super().__init__(message)
 
 
-def run(argv, cwd=None, stdout_path=None, check=True, log=None):
+def run(argv, cwd=None, stdout_path=None, check=True, log=None, stderr=subprocess.PIPE):
     '''
     Run argv as a list.  stdout_path replaces a `> file` shell redirect without
     needing shell=True.  Raises ExternalToolError on a non-zero exit when check.
+
+    stderr: subprocess.PIPE (the default) captures it, for the error message
+    and as proc.stderr; None lets it through to the terminal, as os.system did
+    for a command with no redirect (bwa mem's progress lines, for one);
+    subprocess.DEVNULL discards it, the `2> /dev/null` of the old shell strings.
     '''
     argv = [str(a) for a in argv]
     if log is not None:
@@ -57,7 +63,7 @@ def run(argv, cwd=None, stdout_path=None, check=True, log=None):
     stdout = open(stdout_path, 'wb') if stdout_path else subprocess.PIPE
     try:
         proc = subprocess.run(argv, cwd=cwd, stdout=stdout,
-                              stderr=subprocess.PIPE, check=False)
+                              stderr=stderr, check=False)
     except FileNotFoundError as e:
         raise ExternalToolError(argv, detail=f'not found on PATH ({e.strerror})') from e
     finally:
@@ -69,10 +75,24 @@ def run(argv, cwd=None, stdout_path=None, check=True, log=None):
     return proc
 
 
+def _drain(stream, into):
+    '''Read a pipe to its end on a thread; into[0] receives the bytes.'''
+    try:
+        into[0] = stream.read()
+    finally:
+        stream.close()
+
+
 def run_pipe(argv_a, argv_b, cwd=None, stdout_path=None, check=True, log=None):
     '''
     argv_a | argv_b, for the two bcftools mpileup-into-call pipelines.  A shell
     pipeline reports only the last exit status, so both are checked here.
+
+    The first process's stderr is drained on a thread while the second runs.
+    It used to be read only after second.communicate() returned, so once
+    bcftools mpileup had written a pipe buffer's worth of warnings (about
+    64 KB: many contigs, read-group notes) it blocked on stderr, stopped
+    feeding stdout, and both processes waited on each other for good.
     '''
     argv_a = [str(a) for a in argv_a]
     argv_b = [str(a) for a in argv_b]
@@ -80,15 +100,28 @@ def run_pipe(argv_a, argv_b, cwd=None, stdout_path=None, check=True, log=None):
         log.append(' '.join(shlex.quote(a) for a in argv_a) + ' | '
                    + ' '.join(shlex.quote(a) for a in argv_b))
     stdout = open(stdout_path, 'wb') if stdout_path else subprocess.PIPE
+    first = None
+    err_a_box = [b'']
     try:
         first = subprocess.Popen(argv_a, cwd=cwd, stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE)
-        second = subprocess.Popen(argv_b, cwd=cwd, stdin=first.stdout,
-                                  stdout=stdout, stderr=subprocess.PIPE)
+        drain = threading.Thread(target=_drain, args=(first.stderr, err_a_box), daemon=True)
+        drain.start()
+        try:
+            second = subprocess.Popen(argv_b, cwd=cwd, stdin=first.stdout,
+                                      stdout=stdout, stderr=subprocess.PIPE)
+        except FileNotFoundError:
+            # The consumer never started: do not leave the producer writing
+            # into a pipe nobody reads.
+            first.kill()
+            first.stdout.close()
+            drain.join()
+            first.wait()
+            raise
         first.stdout.close()          # let the first process see a broken pipe
         err_b = second.communicate()[1]
-        err_a = first.stderr.read()
-        first.stderr.close()
+        drain.join()
+        err_a = err_a_box[0]
         first.wait()
     except FileNotFoundError as e:
         raise ExternalToolError(argv_a + ['|'] + argv_b,
@@ -103,13 +136,19 @@ def run_pipe(argv_a, argv_b, cwd=None, stdout_path=None, check=True, log=None):
     return first.returncode, second.returncode
 
 
-def require_output(path, min_bytes=1, bam=False, vcf_records=False, what=None):
+def require_output(path, min_bytes=1, bam=False, vcf_records=False, vcf_header=False,
+                   what=None):
     '''
     Assert a stage actually produced something usable.
 
     Checked separately from the return code because several of these tools exit 0
     after writing an empty or truncated file -- which is exactly how a failed
     alignment used to become a complete-looking sample at 0x coverage.
+
+    vcf_records: the VCF must hold at least one record.
+    vcf_header: the VCF must have its #CHROM line; records are optional.  For a
+    caller whose header-only output is a real answer -- no variant -- rather
+    than a failure.  Returns whether the file holds any record.
     '''
     label = what or os.path.basename(path)
     if not os.path.exists(path):
@@ -131,9 +170,21 @@ def require_output(path, min_bytes=1, bam=False, vcf_records=False, what=None):
         with open(path, 'r', errors='replace') as f:
             for line in f:
                 if not line.startswith('#') and line.strip():
-                    return
+                    return True
         raise ExternalToolError(['require_output', path],
                                 detail=f'{label} contains no variant records')
+    if vcf_header:
+        header = False
+        with open(path, 'r', errors='replace') as f:
+            for line in f:
+                if line.startswith('#'):
+                    header = header or line.startswith('#CHROM')
+                elif line.strip():
+                    return True
+        if not header:
+            raise ExternalToolError(['require_output', path],
+                                    detail=f'{label} has no #CHROM header line and no records')
+        return False
 
 
 def mapped_read_count(bam):

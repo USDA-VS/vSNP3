@@ -32,7 +32,9 @@ class Kraken2_Identification:
         # Internal custom database https://github.com/stuber/instructions/blob/master/kraken2_database.md
         self.db = kwargs.get('database', None) #path to database directory
         # External custom databases https://benlangmead.github.io/aws-indexes/k2
-        self.threads = multiprocessing.cpu_count() - 2
+        # At least one thread: cpu_count() - 2 is 0 or negative on a 1-2 core
+        # machine, and kraken2 refuses --threads 0.
+        self.threads = max(1, multiprocessing.cpu_count() - 2)
         self.FASTA = kwargs.get('FASTA', None)
         self.FASTQ_R1 = kwargs.get('FASTQ_R1', None)
         self.FASTQ_R2 = kwargs.get('FASTQ_R2', None)
@@ -44,7 +46,7 @@ class Kraken2_Identification:
         if db_contents:
             readme_path = Path(self.db) / 'README'
             try:
-                with open(readme_path, 'r') as opened_file:
+                with open(readme_path, 'r', encoding='utf-8', errors='replace') as opened_file:
                     for line in opened_file:
                         print(line.strip())
                 print(f'\nDatabase location: {self.db}\n')
@@ -155,7 +157,7 @@ class Kraken2_Identification:
                     
                 log_path = Path(self.directory) / "kraken_log.txt"
                 try:
-                    with open(log_path, "a") as log_file:
+                    with open(log_path, "a", encoding='utf-8', errors='replace') as log_file:
                         log_file.write(log_content + '\n')
                 except Exception as e:
                     print(f'Warning: Could not write log file: {e}')

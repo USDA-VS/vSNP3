@@ -38,6 +38,57 @@ class Assemble(Setup):
             self.R1 = fastq_stats.R1
             self.R2 = fastq_stats.R2
 
+    # Lines of SPAdes output kept when it fails, for the run log.
+    LOG_TAIL_LINES = 15
+
+    @staticmethod
+    def spades_argv(FASTQ_list):
+        '''The SPAdes command for one or two read files.'''
+        if len(FASTQ_list) == 2:
+            #--pe-[1-2]-s assemble unequal read files
+            return ["spades.py", "--pe1-s", FASTQ_list[0], "--pe2-s", FASTQ_list[1],
+                    "-o", "spades_assembly", "--careful"]  # default -t 16
+        if len(FASTQ_list) == 1:  # assume iontorrent
+            return ["spades.py", "--iontorrent", "-s", FASTQ_list[0],
+                    "-o", "spades_assembly", "--careful"]
+        raise ValueError('Must have either single or paired read set.')
+
+    def _run_spades(self, argv):
+        '''
+        Run SPAdes.  Returns True when it ran and exited 0.  On any failure
+        self.spades_log_tail holds the last lines SPAdes wrote (stderr, else
+        stdout, where SPAdes puts its "== Error ==" block) and self.spades_version
+        says what went wrong, and the method returns False instead of raising.
+
+        This used to sys.exit(1) on a missing spades.py, from inside the
+        alignment stage, so no VCF, report or statistics were written for the
+        sample; and capture_output=True threw the SPAdes output away.  A failed
+        or absent assembler is now recorded and the alignment carries on, as it
+        already did for an assembly that ran and produced no scaffolds.
+        '''
+        self.spades_log_tail = []
+        self.spades_returncode = None
+        try:
+            proc = subprocess.run(argv, capture_output=True, check=False)
+        except FileNotFoundError:
+            self.spades_version = 'SPAdes: not found on PATH'
+            self.spades_log_tail = ['spades.py not found on PATH; install SPAdes '
+                                    '(conda install -c bioconda spades) or run without -assemble_unmap']
+            print(f'\n### {self.spades_version}: unmapped reads were not assembled\n')
+            return False
+        except OSError as e:
+            self.spades_version = f'SPAdes: could not be started ({e})'
+            self.spades_log_tail = [str(e)]
+            print(f'\n### {self.spades_version}\n')
+            return False
+        self.spades_returncode = proc.returncode
+        if proc.returncode != 0:
+            text = (proc.stderr or b'').decode('utf-8', errors='replace').strip() \
+                or (proc.stdout or b'').decode('utf-8', errors='replace').strip()
+            self.spades_log_tail = text.splitlines()[-self.LOG_TAIL_LINES:]
+            print(f'\n### SPAdes exited {proc.returncode}\n')
+        return proc.returncode == 0
+
     def run(self,):
         '''
         Run SPAdes assembly, single read assumes ion torrent
@@ -48,33 +99,25 @@ class Assemble(Setup):
         debug = self.debug
 
         self.print_run_time('SPAdes')
-        try:
-            if len(FASTQ_list) == 2:
-                #--pe-[1-2]-s assemble unequal read files
-                subprocess.run(["spades.py", "--pe1-s", FASTQ_list[0], "--pe2-s", FASTQ_list[1], "-o", "spades_assembly", "--careful"], capture_output=True, check=False) # default -t 16, capture_output=True
-            elif len(FASTQ_list) == 1: # assume iontorrent
-                subprocess.run(["spades.py", "--iontorrent", "-s", FASTQ_list[0], "-o", "spades_assembly", "--careful"], capture_output=True, check=False)
-            else:
-                print(f'\n### Must have either single or paired read set.\n')
-                sys.exit(1)
-        except Exception as e:
-            print(f"\n### Error running SPAdes: {str(e)}\n")
-            sys.exit(1)
+        self.spades_version = None
+        ran = self._run_spades(self.spades_argv(FASTQ_list))
 
         if os.path.exists(f'{cwd}/spades_assembly/scaffolds.fasta'):
             shutil.copy2(f'{cwd}/spades_assembly/scaffolds.fasta', f'{cwd}/{sample_name}.fasta')
             self.FASTA = f'{cwd}/{sample_name}.fasta'
         else:
-            print(f'\n### SPAdes did not complete, see log\n')
+            if ran:
+                print(f'\n### SPAdes did not complete, see log\n')
             self.FASTA = None
-        
-        if not debug:
+
+        if not debug and os.path.isdir(f'{cwd}/spades_assembly'):
             shutil.rmtree(f'{cwd}/spades_assembly')
-        
-        try:
-            self.spades_version = subprocess.run(['spades.py', '-v'], capture_output=True, text=True, check=False).stdout.splitlines()[0]
-        except Exception:
-            self.spades_version = "SPAdes version: unable to determine"
+
+        if self.spades_version is None:
+            try:
+                self.spades_version = subprocess.run(['spades.py', '-v'], capture_output=True, text=True, check=False).stdout.splitlines()[0]
+            except Exception:
+                self.spades_version = "SPAdes version: unable to determine"
 
     def stats(self, FASTA=None):
         '''

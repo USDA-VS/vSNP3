@@ -18,7 +18,9 @@ from collections import Counter
 from concurrent import futures
 import multiprocessing
 from multiprocessing import Process, Queue
+from queue import Empty
 import time
+import traceback
 from datetime import datetime
 
 import warnings
@@ -34,8 +36,9 @@ for _msg in (r'.*invalid value encountered.*',
 warnings.filterwarnings('ignore', category=DeprecationWarning, module='openpyxl')
 
 from vsnp3_version import (AC_HETEROZYGOUS, AC_HOMOZYGOUS, MQ_THRESHOLD,
-                             N_THRESHOLD, QUAL_THRESHOLD)
+                             N_THRESHOLD, QUAL_THRESHOLD, mixed_signature)
 from vsnp3_reference_options import Ref_Options
+from vsnp3_file_setup import worker_count
 from vsnp3_fasta_to_snps_table import Tree
 from vsnp3_fasta_to_snps_table import Tables
 from vsnp3_annotation import Annotation
@@ -48,10 +51,19 @@ locale.setlocale(locale.LC_ALL, "C")
 
 # Define wrapper at module level
 def wrapper(queue, func, *args, **kwargs):
-    result = func(*args, **kwargs)
-    queue.put(result)
+    # The outcome is always reported, success or failure.  Before, an exception
+    # in func ended the child without putting anything on the queue, and the
+    # parent's unconditional queue.get() then waited forever: an html_tree
+    # crash on one group hung the entire step 2 run with no message.
+    try:
+        result = func(*args, **kwargs)
+    except BaseException as e:                                  # noqa: BLE001
+        queue.put(('error', f'{type(e).__name__}: {e}\n{traceback.format_exc()}'))
+        return
+    queue.put(('ok', result))
 
 def run_with_timeout(func, timeout_seconds, *args, **kwargs):
+    name = getattr(func, '__name__', str(func))
     queue = Queue()
     process = Process(
         target=wrapper,
@@ -59,15 +71,31 @@ def run_with_timeout(func, timeout_seconds, *args, **kwargs):
         kwargs=kwargs
     )
     process.start()
-    process.join(timeout=timeout_seconds)
+    deadline = time.monotonic() + timeout_seconds
+    message = None
+    while message is None:
+        try:
+            message = queue.get(timeout=1)
+        except Empty:
+            if not process.is_alive():
+                # Exited: its message is on the queue, or it was killed before
+                # it could report (an OOM kill, for instance).
+                try:
+                    message = queue.get(timeout=5)
+                except Empty:
+                    process.join()
+                    raise RuntimeError(f'{name} exited with status {process.exitcode} '
+                                       f'without returning a result')
+            elif time.monotonic() > deadline:
+                process.terminate()
+                process.join()
+                raise TimeoutError("Function took longer than {} seconds".format(timeout_seconds))
+    process.join(timeout=30)
+    status, payload = message
+    if status == 'error':
+        raise RuntimeError(f'{name} failed: {payload}')
+    return payload
 
-    if process.is_alive():
-        process.terminate()
-        process.join()
-        raise TimeoutError("Function took longer than {} seconds".format(timeout_seconds))
-    
-    return queue.get()
-    
 class bcolors:
     PURPLE = '\033[95m'
     BLUE = '\033[94m'
@@ -79,16 +107,65 @@ class bcolors:
     UNDERLINE = '\033[4m'
     ENDC = '\033[0m'
 
+def clean_unicode(text):
+    """Clean unicode characters and normalize text for safe file operations"""
+    if pd.isna(text):
+        return text
+    # Replace accented characters with their ASCII equivalents, drop the rest.
+    text = unicodedata.normalize('NFD', str(text))
+    return text.encode('ascii', errors='ignore').decode('ascii')
+
+
+class DefiningSnpsError(ValueError):
+    '''A mistake in the defining-SNP worksheet that the run must not continue with.'''
+
+
+# Characters a Newick taxon name cannot carry unquoted.  RAxML exits on them,
+# so they failed the whole group.  Metadata names are cleaned in read_metadata;
+# this is for names derived from the VCF file name.
+NEWICK_UNSAFE = re.compile(r"[\s:,;()\[\]']")
+
+
 class Group():
     ''' 
     '''
-    def __init__(self, cwd=None, metadata=None, excel_remove=None, gbk_list=None, defining_snps=None, dataframes=None, pickle_file=None, abs_pos=None, group=None, all_vcf=None, find_new_filters=None, no_filters=True, qual_threshold=QUAL_THRESHOLD, n_threshold=N_THRESHOLD, mq_threshold=MQ_THRESHOLD, show_groups=False, hash_groups=None, html_tree=False, dp=False, filter_density=False, density_threshold=3, density_window=20, debug=False):
+    def __init__(self, cwd=None, metadata=None, excel_remove=None, gbk_list=None, defining_snps=None, dataframes=None, pickle_file=None, abs_pos=None, group=None, all_vcf=None, find_new_filters=None, no_filters=True, qual_threshold=QUAL_THRESHOLD, n_threshold=N_THRESHOLD, mq_threshold=MQ_THRESHOLD, show_groups=False, hash_groups=None, html_tree=False, dp=False, filter_density=False, density_threshold=3, density_window=20, debug=False, sample_stats=None):
 
         self.qual_threshold = qual_threshold
         self.n_threshold = n_threshold
         self.mq_threshold = mq_threshold
         self.find_new_filters = find_new_filters
         self.vcf_bad_list=[]
+        # Samples analysed with no SNP passing the thresholds: name -> detail.
+        # These used to go into vcf_bad_list -- reported as "corrupt" by the
+        # step 2 summary, which they are not -- and were dropped from every
+        # group, table and tree with nothing else said.
+        self.no_snp_samples = {}
+        # Samples that have passing SNPs but whose confident mixed calls
+        # outnumber them several times over (vsnp3_version.mixed_signature):
+        # name -> counts.  The summary highlights them in the Groupings table.
+        self.mixed_samples = {}
+        # Cells taken from inside a sample's multi-base record (make_groupings):
+        # sample name -> number of table cells, summed over groups.
+        self.embedded_cells = defaultdict(int)
+        # group -> positions that left the group's table because a call read from
+        # a multi-base record made every sample in the group carry the same base.
+        self.embedded_now_uninformative = defaultdict(set)
+        self._embedded_cache = {}
+        # sample name -> VCF basename, for every sample that was analysed
+        self.sample_sources = {}
+        # parse statistics per VCF basename, from vsnp3_step2.py
+        self.sample_stats = sample_stats or {}
+        self.metadata_problem = None
+        self.metadata_blank_rows = 0        # worksheet rows ignored for a blank cell
+        self.fallback_renames = {}          # VCF basename -> (name before, name after)
+        self.undetermined_in_group = defaultdict(list)   # group -> samples left out: no determined base
+        self.rewrite_errors = {}            # (group, sample) -> error in the call rewrite
+        self.worksheet_notes = []           # defining-SNP worksheet entries ignored or merged
+        self.all_vcf_name = None
+        self.html_tree_failures = {}
+        self.phase_times = []
+        self._phase_t0 = time.monotonic()
         # Assigned per group below.  Initialized here because vsnp3_step2.py reads
         # raxml_version at the very end of the run, and when no group produced a tree
         # the attribute never existed -- so a complete run died with AttributeError
@@ -114,8 +191,8 @@ class Group():
         else:
             self.cwd = cwd
 
-        cpu_count = int(multiprocessing.cpu_count() / 1.2)
-        
+        cpu_count = worker_count()     # honours VSNP3_MAX_CPUS
+
         if abs_pos and group:
             print('Dropping {} for single grouping'.format(defining_snps))
             defining_snps = None
@@ -170,56 +247,39 @@ class Group():
             filter_snps_df = pd.read_excel(defining_snps, header=1)
             group_filter_snps_dict = filter_snps_df.iloc[:, 1:].to_dict(orient='list')
             group_filter_snps_dict = {k:[elem for elem in v if not pd.isna(elem)] for k,v in group_filter_snps_dict.items()}
+            group_filter_snps_dict = self._check_defining_snps(
+                defining_snps, defining_snps_df, defining_snps_dict, group_filter_snps_dict,
+                filter_all_list if not no_filters else [])
             self.group_filter_snps_dict = group_filter_snps_dict
             #get all_vcf column name for labeling group
             all_vcf_column = filter_snps_df.iloc[:, 0:1].to_dict(orient='list')
             all_vcf_name = list(all_vcf_column.keys())[0]
 
-            def clean_unicode(text):
-                """Clean unicode characters and normalize text for safe file operations"""
-                if pd.isna(text):
-                    return text
-                
-                # Convert to string if not already
-                text = str(text)
-                
-                # Remove or replace problematic unicode characters
-                # Option 1: Remove all non-ASCII characters
-                # text = text.encode('ascii', errors='ignore').decode('ascii')
-                
-                # Option 2: Replace accented characters with ASCII equivalents (recommended)
-                text = unicodedata.normalize('NFD', text)
-                text = text.encode('ascii', errors='ignore').decode('ascii')
-                
-                return text
-        
-            if metadata:
+        # Metadata is read whether or not a defining-SNP worksheet is in use.
+        # It used to be read inside the `elif defining_snps` branch above, so a
+        # reference type without a metadata file -- and any -abs_pos/-group run
+        # -- left metadata_df unassigned and the name resolution below died with
+        # UnboundLocalError.  A metadata file is optional: without one the VCF
+        # file names are the sample names, and the run goes on.  (The phrase
+        # "kapurlab: metadata is optional" is the marker vsnp_gui's
+        # deploy/vsnp3-patches/apply.sh checks before inserting its own copy of
+        # this fix into an installed vsnp3; leave it in place.)
+        metadata_df = None
+        metadata_test = False
+        if metadata:
+            try:
+                metadata_df = self.read_metadata(metadata)
                 metadata_test = True
-                metadata_df = pd.read_excel(metadata, header=None, index_col=0, usecols=[0, 1], names=['file_name', 'metadata'])
-                
-                # Convert to string types in case sample names are numbers/int
-                metadata_df = metadata_df.reset_index()
-                metadata_df['file_name'] = metadata_df['file_name'].astype(str)
-                metadata_df['metadata'] = metadata_df['metadata'].astype(str)
-                
-                # Clean unicode characters first
-                metadata_df['metadata'] = metadata_df['metadata'].apply(clean_unicode)
-                
-                # Define all illegal characters that need to be replaced
-                illegal_chars = ['\t', '\r', ' ', ':', ',', ')', '(', ';', ']', '[', "'", 
-                                '/', '.', '*', '?', '{', '}']
-                
-                # Replace each illegal character with underscore
-                for char in illegal_chars:
-                    metadata_df['metadata'] = metadata_df['metadata'].str.replace(char, '_', regex=False)
-                
-                # Clean up multiple underscores and trailing characters
-                metadata_df['metadata'] = metadata_df['metadata'].str.replace('_+', '_', regex=True)  # Multiple underscores to single
-                metadata_df['metadata'] = metadata_df['metadata'].str.replace(r'_$', '', regex=True)   # Trailing underscore
-                metadata_df['metadata'] = metadata_df['metadata'].str.replace(r'-$', '', regex=True)   # Trailing dash
-                
-            else:
-                metadata_test = False
+                self.metadata_blank_rows = int(metadata_df.attrs.get('blank_rows', 0))
+                if self.metadata_blank_rows:
+                    print(f'\n### Metadata: {self.metadata_blank_rows} row(s) with a blank cell '
+                          f'ignored; the VCF file name is used for those samples.\n')
+            except Exception as e:                              # noqa: BLE001
+                self.metadata_problem = (
+                    f'{os.path.basename(str(metadata))} could not be read '
+                    f'({type(e).__name__}: {e})')
+                print(f'\n### Metadata not used: {self.metadata_problem}. '
+                      f'VCF file names are used as sample names.\n')
 
         print('{}Defining SNPs: {}{}{}'.format(bcolors.RED, bcolors.ENDC, bcolors.WHITE, defining_snps))
         print('{}{}'.format(bcolors.ENDC, ''))
@@ -244,6 +304,7 @@ class Group():
                 bcolors.RED, bcolors.ENDC, bcolors.WHITE, bcolors.ENDC))
 
         print('\nSorting defining SNPs  Selection Time: {}\n'.format(datetime.now() - self.startTime))
+        self._phase('Sort defining SNPs')
 
         if pickle_file:
             with open(pickle_file, 'rb') as handle:
@@ -283,6 +344,14 @@ class Group():
             base = os.path.basename(source)
             name, key, hits = self.resolve_sample_name_detail(
                 base, metadata_df, metadata_test)
+            if key is None:
+                # A file-name-derived name goes to RAxML as a Newick taxon; a
+                # space, quote, bracket, colon, comma or semicolon in the file
+                # name failed RAxML, and with it the whole group.
+                safe = self.safe_fallback_name(name)
+                if safe != name:
+                    self.fallback_renames[base] = (name, safe)
+                    name = safe
             resolved[source] = name
             matched_key[source] = key
             if hits > 1:
@@ -292,6 +361,13 @@ class Group():
                 if len(targets) > 1:
                     self.metadata_ambiguous[base] = {'key': key, 'targets': targets}
             name_sources[name].append(source)
+
+        if self.fallback_renames:
+            print(f'\n### {len(self.fallback_renames)} VCF file name(s) contain characters a '
+                  f'tree cannot carry; those samples are named with "_" in their place:')
+            for base, (before, after) in sorted(self.fallback_renames.items()):
+                print(f'      {base}: {before!r} -> {after!r}')
+            print()
 
         if self.metadata_ambiguous:
             print(f'\n### {len(self.metadata_ambiguous)} VCF file(s) match more than '
@@ -354,11 +430,14 @@ class Group():
             if source in superseded:
                 continue
             sample = resolved[source]
+            self.sample_sources[sample] = os.path.basename(source)
             # single_df.loc[single_df['ALT'].str.len() > 1, 'ALT'] = 'N' # keep indel positions Ns, ie. ALT indels to N, REF indels handled in make_groupings function
             dataframes_names_updated[sample] = single_df
-            if not no_filters and filter_all_list:
-                single_df = single_df[~single_df['abs_pos'].isin(filter_all_list)]
-            # First iteration.  Find good SNPs for each VCF.  There must be at least one good SNP to include position in table
+            all_records = single_df
+            # First iteration.  Find good SNPs for each VCF.  A sample needs no
+            # good SNP of its own to be in the table: it is normalized against
+            # the group's positions in make_groupings and carries the reference
+            # call (or its own mixed/N/no-coverage call) at each of them.
             try:
                 # A record with no MQ or QUAL is excluded from position selection
                 # rather than read as zero: as zero these silently failed the
@@ -368,22 +447,50 @@ class Group():
                 # most of the file and says nothing about the sample.  Those
                 # records still reach the table as '-' through make_groupings;
                 # what is excluded here is only their use in choosing positions.
-                # notna() stated explicitly: a comparison against NA is NA, which
-                # pandas then treats as False, so this reads as intent rather than
-                # relying on that.
-                single_df = single_df[single_df['QUAL'].notna() & (single_df['QUAL'] > self.qual_threshold) & (single_df['AC'] == AC_HOMOZYGOUS) & (single_df['REF'].str.len() == 1) & (single_df['ALT'].str.len() == 1) & single_df['MQ'].notna() & (single_df['MQ'] >= self.mq_threshold)]
+                #
+                # One pass over the sample's records.  The filtered selection
+                # is these rows minus the filter positions (a row mask, so the
+                # order of filtering and selecting does not matter), and the
+                # counts below reuse the same result: three passes per sample
+                # over every record, zero-coverage ones included, took about
+                # 36 minutes of a 10,000-sample run.
+                passing_all = self._passing(all_records)
             except AttributeError:
                 print('\n### Error with sample {}\nSee VCF file and rerun\n'.format(sample))
                 sys.exit(1)
+            if not no_filters and filter_all_list:
+                single_df = passing_all[~passing_all['abs_pos'].isin(filter_all_list)]
+            else:
+                single_df = passing_all
 
             mq_dictionary = single_df[['abs_pos', 'MQ']].set_index('abs_pos').to_dict()['MQ']
             for abs_pos, MQ in mq_dictionary.items():
                 map_quality_dict[abs_pos].append(MQ)
 
             if single_df.empty:
-                self.vcf_bad_list.append('{}  Dataframe Empty at vsnp3_group_on_defining_snps.py ~ line 175.  Thresholds (QUAL, MQ, etc) may not be being met and causing no positions to be selected.'.format(sample))
+                # Kept, and said.  This sample used to be appended to
+                # vcf_bad_list as "Dataframe Empty" and left out of every
+                # group, so the summary counted it as corrupt while the
+                # validation section counted zero failures, and the sample was
+                # nowhere in the tables.  A sample identical to the reference
+                # looks exactly like this; so does one whose calls are all AC=1.
+                passing_before_filter = 0
+                if not no_filters and filter_all_list:
+                    passing_before_filter = len(passing_all)
+                self.no_snp_samples[sample] = self.describe_no_snps(
+                    all_records, os.path.basename(source), passing_before_filter)
             else:
-                dataframe_essentials[sample] = single_df
+                # A mixture with a few passing SNPs (sites where one strain's reads
+                # happen to dominate) is not caught above.  Flag it when its
+                # confident mixed calls outnumber its passing SNPs several times
+                # over (vsnp3_version.mixed_signature).
+                passing_all_count = len(passing_all)
+                confident_ac1 = self._confident_mixed(all_records)
+                if mixed_signature(passing_all_count, confident_ac1):
+                    self.mixed_samples[sample] = {
+                        'file': os.path.basename(source), 'passing': passing_all_count,
+                        'confident_ac1': confident_ac1}
+            dataframe_essentials[sample] = single_df
             for abs_pos, alt in zip(single_df.abs_pos, single_df.ALT):
                 abs_pos_nt_counts[abs_pos][alt] += 1
         # Name collisions were settled before this loop, so every remaining input
@@ -453,6 +560,7 @@ class Group():
                       f'Add a gbk covering these contigs to annotate them.')
         self.annotation_df = pd.DataFrame(annotation_dict.items(), columns=['abs_pos', 'annotation'])
         print('\n\tGetting dataframe essentials  Selection Time: {}\n'.format(datetime.now() - self.startTime))
+        self._phase('Select SNP positions and annotate')
 
         if defining_snps_dict:
             self.startTime = datetime.now()
@@ -476,7 +584,16 @@ class Group():
                             each_df = each_df[~each_df['abs_pos'].isin(expanded_filter_list)] #by group remove positions to filter
                             sample_dict_group_filter[sample] = each_df
                         sample_dict = sample_dict_group_filter
-                    groupings_dict[group] = sample_dict #defining_snps_dict[abs_pos] provides group
+                    if group in groupings_dict:
+                        # Two defining positions name the same group: the group
+                        # is their union.  The second used to overwrite the
+                        # first, so the first position's samples left the
+                        # group's table with nothing said.
+                        merged = dict(groupings_dict[group])
+                        merged.update(sample_dict)
+                        groupings_dict[group] = merged
+                    else:
+                        groupings_dict[group] = sample_dict #defining_snps_dict[abs_pos] provides group
                     
             # else:
             #     print('Grouping: Pool processing with {} cpus...'.format(cpu_count))
@@ -498,11 +615,13 @@ class Group():
             samples_with_group_set = set(combined_lists)
             samples_without_group_set = samples_with_dataframes_set - samples_with_group_set
             print('\n\tGroup Selection Time: {}\n'.format(datetime.now() - self.startTime))
+            self._phase('Group selection')
         else:
             samples_without_group_set = samples_with_dataframes_set
             groupings_dict = {}
 
         if all_vcf or not defining_snps_dict:
+            self.all_vcf_name = all_vcf_name or 'all_vcf'
             if all_vcf_name:
                 groupings_dict[all_vcf_name] = self.dataframe_essentials
             else:
@@ -592,6 +711,7 @@ class Group():
                             print('{} Average QUAL: {:.2f}, Max QUAL: {:.2f}, Average MQ: {:.2f}'.format(
                                 vv, row['qual_mean'], row['qual_max'], row['mq_mean']), file=postion_detail_list)
         print('\n\tAll relevant positions by group {}\n'.format(datetime.now() - self.startTime))
+        self._phase('Normalize groups, parsimony-informative positions')
 
         print('FASTAs out and RAxML trees')
         self.startTime = datetime.now()
@@ -624,6 +744,12 @@ class Group():
         self.group_dataframe_dict = group_dataframe_dict
         finished_groupings_list = list(finished_groupings_dict.keys())
         working_group_list = [x for x in finished_groupings_list if x not in remove_list]
+        # Largest alignment first.  The all-VCF group is the last one defined
+        # and by far the biggest, so it used to be submitted last and the
+        # phase ended with it running alone.  Each group's output does not
+        # depend on when it is built; a stable sort keeps the old order among
+        # groups of the same size.
+        working_group_list.sort(key=lambda g: -group_dataframe_dict[g].size)
         self.calculate_average_coverage()
 
         # One group's failure must not take the others with it.  pool.map returns a
@@ -651,8 +777,15 @@ class Group():
             for group, reason in sorted(self.group_failures.items()):
                 print(f'###   {group}: {reason}')
             print('###   The remaining groups completed normally.\n')
+        if self.html_tree_failures:
+            print(f'\n### HTML tree not written for {len(self.html_tree_failures)} group(s); '
+                  f'their tables and RAxML trees were:')
+            for group, reason in sorted(self.html_tree_failures.items()):
+                print(f'###   {group}: {reason}')
+            print()
 
         print('\n\tFASTAs, RAxML and HTML trees {}\n'.format(datetime.now() - self.startTime))
+        self._phase('FASTAs, RAxML trees, tables and HTML trees')
         # print('\n\nTotal Time: {}\n'.format(datetime.now() - self.beginTime))
 
         #Add back those that where a group was not found
@@ -829,6 +962,304 @@ class Group():
         
         return group_found, sample_dict
 
+    def _check_defining_snps(self, path, defining_snps_df, defining_snps_dict,
+                             group_filter_snps_dict, filter_all_list):
+        '''
+        The worksheet mistakes that used to crash the run after the inputs
+        were archived, or mis-group silently, caught once after reading.
+
+        Raises DefiningSnpsError for a position header that is not
+        chrom:position text and for a blank group name.  A group name used by
+        more than one position is allowed (the group is the union; see where
+        groupings_dict is filled) and the filter lists of its columns, which
+        pandas reads back as "name", "name.1", ..., are merged here.  Filter
+        entries that are not chrom:position text match no record and are
+        noted, as they always were ignored.
+        '''
+        name = os.path.basename(str(path))
+        problems = []
+        positions = list(defining_snps_df.columns[1:])
+        for number, label in enumerate(positions, start=2):
+            if not isinstance(label, str) or ':' not in label:
+                problems.append(f'column {number}: the position header {label!r} is not '
+                                f'chrom:position text')
+        groups = {}
+        for label in positions:
+            if not isinstance(label, str):
+                continue
+            grp = defining_snps_dict.get(label)
+            if grp is None or (isinstance(grp, float) and grp != grp) or not str(grp).strip():
+                problems.append(f'position {label}: the group name in row 2 is blank')
+            else:
+                groups.setdefault(str(grp), []).append(label)
+        if problems:
+            raise DefiningSnpsError(
+                f'Defining SNP worksheet {name} cannot be used:\n  '
+                + '\n  '.join(problems)
+                + '\nRow 1 holds chrom:position headers, row 2 the group names, and the '
+                  'rows below them the positions to filter. Correct the worksheet and rerun; '
+                  'the input VCF files have not been removed.')
+        duplicates = sorted(g for g, cols in groups.items() if len(cols) > 1)
+        if duplicates:
+            self.worksheet_notes.append(
+                f'{len(duplicates)} group name(s) are given by more than one defining '
+                f'position and were merged into one group each: '
+                + ', '.join(f'{g} ({len(groups[g])} positions)' for g in duplicates))
+            # pandas names repeated columns "G", "G.1", "G.2": fold them back.
+            merged = {}
+            for column, entries in group_filter_snps_dict.items():
+                base = re.sub(r'\.\d+$', '', str(column))
+                target = base if (base in duplicates and column not in groups) else column
+                merged.setdefault(target, [])
+                merged[target].extend(e for e in entries if e not in merged[target])
+            group_filter_snps_dict = merged
+        odd = [(str(g), e) for g, entries in group_filter_snps_dict.items() for e in entries
+               if not (isinstance(e, str) and ':' in e)]
+        odd += [('(all)', e) for e in filter_all_list if not (isinstance(e, str) and ':' in e)]
+        if odd:
+            shown = ', '.join(f'{g}: {e!r}' for g, e in odd[:8])
+            self.worksheet_notes.append(
+                f'{len(odd)} filter entr{"y" if len(odd) == 1 else "ies"} in {name} are not '
+                f'chrom:position text and match no record, so they filter nothing: {shown}'
+                + (' ...' if len(odd) > 8 else ''))
+        for note in self.worksheet_notes:
+            print(f'\n### {note}\n')
+        return group_filter_snps_dict
+
+    def _phase(self, name):
+        now = time.monotonic()
+        self.phase_times.append((name, now - self._phase_t0))
+        self._phase_t0 = now
+
+    @staticmethod
+    def _single_base(df):
+        '''
+        Mask of records whose REF and ALT are both one base.  The reader
+        (vsnp3_step2.dataframe_from_vcf_body) writes it as the single_base
+        column once per file; the two str.len() passes are the fallback for a
+        frame that did not come from the reader.
+        '''
+        if 'single_base' in df.columns:
+            return df['single_base'].astype(bool)
+        return (df['REF'].str.len() == 1) & (df['ALT'].str.len() == 1)
+
+    def _passing(self, df):
+        '''The records that qualify as SNP positions: the 3.36 selection, unchanged.'''
+        return df[df['QUAL'].notna() & (df['QUAL'] > self.qual_threshold)
+                  & (df['AC'] == AC_HOMOZYGOUS)
+                  & self._single_base(df)
+                  & df['MQ'].notna() & (df['MQ'] >= self.mq_threshold)]
+
+    def _confident_mixed(self, df):
+        '''Single-base AC=1 records at QUAL >= qual_threshold and MQ >= mq_threshold.'''
+        return int((df['QUAL'].notna() & (df['QUAL'] >= self.qual_threshold)
+                    & (df['AC'] == AC_HETEROZYGOUS)
+                    & self._single_base(df)
+                    & df['MQ'].notna() & (df['MQ'] >= self.mq_threshold)).sum())
+
+    @staticmethod
+    def _allele_bases(ref, alt, cigar):
+        '''
+        {reference offset: base} for one ALT allele of a multi-base record, or
+        None when the allele cannot be placed on the reference.
+
+        The CIGAR freebayes writes for each allele says which reference base each
+        ALT base aligns to (M, X, = consume both; D deletes reference bases, which
+        map to None; I inserts ALT bases).  Without a CIGAR that accounts for every
+        base of REF and ALT, a same-length allele is read base by base; any other
+        allele cannot be placed.
+        '''
+        if isinstance(cigar, str) and cigar:
+            ops = re.findall(r'(\d+)([MIDX=])', cigar)
+            if ops and ''.join(n + op for n, op in ops) == cigar:
+                bases, r, a = {}, 0, 0
+                for n, op in ops:
+                    n = int(n)
+                    if op in 'MX=':
+                        for i in range(n):
+                            bases[r + i] = alt[a + i] if a + i < len(alt) else None
+                        r += n
+                        a += n
+                    elif op == 'D':
+                        for i in range(n):
+                            bases[r + i] = None
+                        r += n
+                    else:
+                        a += n
+                if r == len(ref) and a == len(alt):
+                    return bases
+        if len(ref) == len(alt):
+            return dict(enumerate(alt))
+        return None
+
+    def _embedded_calls(self, sample):
+        '''
+        One row per reference position inside the sample's multi-base records
+        (MNP, complex or indel records whose REF spans more than one base), other
+        than the record's first position, where the sample's base is not the
+        reference: abs_pos, REF (that reference base), ALT (the sample's base, or
+        N where it is deleted, cannot be placed, or the record's alleles
+        disagree), and the record's QUAL, AC and MQ.
+
+        freebayes reports a SNP inside such a record when a nearby read carries an
+        indel, e.g. REF=CAC ALT=CCC at position p for an A>C change at p+1.  The
+        SNP's own position then has no record, and make_groupings used to write
+        the reference base there.  These rows give it the base the record reports,
+        under the same QUAL, AC and MQ rules as any other call.
+        '''
+        cache = self.__dict__.setdefault('_embedded_cache', {})
+        if sample in cache:
+            return cache[sample]
+        df = self.dataframes_names_updated[sample]
+        multi = df[(df['REF'].str.len() > 1) & (df['ALT'] != '.')]
+        rows = {}
+        for rec in multi.to_dict('records'):
+            ref, alleles = rec['REF'], str(rec['ALT']).split(',')
+            cigar = rec.get('CIGAR')
+            cigars = cigar.split(',') if isinstance(cigar, str) else []
+            if len(cigars) != len(alleles):
+                cigars = [None] * len(alleles)
+            placed = [self._allele_bases(ref, a, c) for a, c in zip(alleles, cigars)]
+            for offset in range(1, len(ref)):
+                ref_base = ref[offset]
+                seen = set()
+                for bases in placed:
+                    if bases is None:
+                        seen.add('?')                     # allele cannot be placed
+                    else:
+                        b = bases.get(offset)
+                        seen.add('-' if b is None else b)  # '-' a deleted base
+                if seen == {ref_base}:
+                    continue                              # every allele keeps the reference base
+                base = seen.pop() if len(alleles) == 1 and len(seen) == 1 else 'N'
+                if base not in ('A', 'C', 'G', 'T'):
+                    base = 'N'
+                key = f"{rec['CHROM']}:{int(rec['POS']) + offset}"
+                if key in rows:
+                    if rows[key]['ALT'] != base:
+                        rows[key]['ALT'] = 'N'            # two records disagree here
+                    continue
+                rows[key] = {'abs_pos': key, 'REF': ref_base, 'ALT': base,
+                             'QUAL': rec['QUAL'], 'AC': rec['AC'], 'MQ': rec['MQ']}
+        out = pd.DataFrame(list(rows.values()), columns=['abs_pos', 'REF', 'ALT', 'QUAL', 'AC', 'MQ'])
+        out['QUAL'] = out['QUAL'].astype('Int64')
+        out['MQ'] = out['MQ'].astype('Int64')
+        out['AC'] = out['AC'].astype(np.int64)
+        cache[sample] = out
+        return out
+
+    def describe_no_snps(self, df, basename, passing_before_filter=0):
+        '''
+        Why a sample has no SNP passing the thresholds, as counts.
+
+        Written for the summary report, so that a sample with an empty row can
+        be told apart at a glance: identical to the reference, no coverage,
+        every call mixed (AC=1), every call an indel, or every call below QUAL
+        or MQ.
+        '''
+        detail = {'file': basename, 'records': int(len(df)), 'called': 0, 'ac1': 0,
+                  'mixed_only': False, 'reason': ''}
+        if len(df) == 0:
+            detail['reason'] = ('no records in the VCF: identical to the reference '
+                                'everywhere, with full coverage')
+            return detail
+        called_mask = df['QUAL'].notna()
+        called = int(called_mask.sum())
+        zero_cov = len(df) - called
+        detail['called'] = called
+        if called == 0:
+            detail['reason'] = (f'{len(df):,} records, all zero-coverage, no variant '
+                                f'called: identical to the reference where covered')
+            return detail
+        cdf = df[called_mask]
+        ref_len = cdf['REF'].str.len()
+        alt_len = cdf['ALT'].str.len()
+        indel = int(((ref_len > 1) | (alt_len > 1)).sum())
+        ac1 = int((cdf['AC'] == AC_HETEROZYGOUS).sum())
+        snp_mask = (cdf['AC'] == AC_HOMOZYGOUS) & (ref_len == 1) & (alt_len == 1)
+        snps = int(snp_mask.sum())
+        low_qual = int((snp_mask & ~(cdf['QUAL'] > self.qual_threshold)).sum())
+        low_mq = int((snp_mask & (cdf['MQ'].isna() | (cdf['MQ'] < self.mq_threshold))).sum())
+        detail['ac1'] = ac1
+        # Called records that are none of the above: multi-allelic (AC=1,1),
+        # or AC missing from INFO.
+        other = max(0, called - ac1 - indel - snps)
+        parts = [f'{len(df):,} records: {zero_cov:,} zero-coverage, {called:,} called',
+                 f'{ac1:,} mixed (AC=1)', f'{indel:,} indel']
+        if snps:
+            parts.append(f'{snps:,} single-base AC=2, of which {low_qual:,} have QUAL <= '
+                         f'{self.qual_threshold} and {low_mq:,} have MQ < {self.mq_threshold}')
+        else:
+            parts.append('0 single-base AC=2')
+        if other:
+            parts.append(f'{other:,} other (multi-allelic or no AC)')
+        reason = '; '.join(parts) + '; 0 passed the thresholds'
+        if passing_before_filter:
+            reason += (f' ({passing_before_filter:,} passed but every one is at a '
+                       f'position in the filter list)')
+        detail['reason'] = reason
+        # The mixed-sample signature: no homozygous single-base SNP at all, and
+        # mixed calls make up nearly every non-indel call.  Nearly, not all: a
+        # real sample of this kind usually has a stray multi-allelic record.
+        non_indel = max(1, called - indel)
+        detail['mixed_only'] = snps == 0 and ac1 > 0 and ac1 >= 0.9 * non_indel
+        return detail
+
+    @staticmethod
+    def read_metadata(metadata):
+        '''
+        The metadata worksheet as a two-column frame: file_name, metadata.
+
+        Names are cleaned to what the file system and RAxML accept, as before.
+        '''
+        metadata_df = pd.read_excel(metadata, header=None, index_col=0, usecols=[0, 1], names=['file_name', 'metadata'])
+
+        metadata_df = metadata_df.reset_index()
+        # A blank cell is not a name.  astype(str) turned a blank name cell
+        # into the string 'nan', so one blank renamed its sample to "nan" and
+        # two blanks collided and dropped a sample under "duplicate sample
+        # name: nan".  Rows with a blank cell in either column are left out
+        # (the VCF file name then names the sample, as for any unmatched
+        # file) and counted for the summary.
+        blank = (metadata_df['file_name'].isna() | metadata_df['metadata'].isna()
+                 | (metadata_df['file_name'].astype(str).str.strip() == '')
+                 | (metadata_df['metadata'].astype(str).str.strip() == ''))
+        blank_rows = int(blank.sum())
+        metadata_df = metadata_df[~blank].copy()
+        # Convert to string types in case sample names are numbers/int
+        metadata_df['file_name'] = metadata_df['file_name'].astype(str)
+        metadata_df['metadata'] = metadata_df['metadata'].astype(str)
+
+        # Clean unicode characters first
+        metadata_df['metadata'] = metadata_df['metadata'].apply(clean_unicode)
+
+        # Define all illegal characters that need to be replaced
+        illegal_chars = ['\t', '\r', ' ', ':', ',', ')', '(', ';', ']', '[', "'",
+                        '/', '.', '*', '?', '{', '}']
+
+        # Replace each illegal character with underscore
+        for char in illegal_chars:
+            metadata_df['metadata'] = metadata_df['metadata'].str.replace(char, '_', regex=False)
+
+        # Clean up multiple underscores and trailing characters
+        metadata_df['metadata'] = metadata_df['metadata'].str.replace('_+', '_', regex=True)  # Multiple underscores to single
+        metadata_df['metadata'] = metadata_df['metadata'].str.replace(r'_$', '', regex=True)   # Trailing underscore
+        metadata_df['metadata'] = metadata_df['metadata'].str.replace(r'-$', '', regex=True)   # Trailing dash
+        metadata_df.attrs['blank_rows'] = blank_rows
+        return metadata_df
+
+    @staticmethod
+    def safe_fallback_name(name):
+        '''
+        A file-name-derived sample name as a Newick taxon.  Characters RAxML
+        cannot carry become '_'; a name that needs no change is returned as is.
+        '''
+        cleaned = NEWICK_UNSAFE.sub('_', str(name))
+        if cleaned == name:
+            return name
+        cleaned = re.sub('_+', '_', cleaned).strip('_')
+        return cleaned or name
+
     @staticmethod
     def resolve_sample_name_detail(basename, metadata_df, metadata_test):
         '''
@@ -933,13 +1364,39 @@ class Group():
         df_list=[]
         group, sample_dict = group_sample_dict # sample_dict is from dataframe_essentials, ie good SNPs.
         for sample, df in sample_dict.items():
-            df_list.append(df[['abs_pos', 'REF']])  
+            if not df.empty:
+                df_list.append(df[['abs_pos', 'REF']])
+        if not df_list:
+            # Every sample in the group is reference-identical, or has no SNP
+            # passing the thresholds: there is no position to align.
+            print(f'  {group}: no sample has a SNP passing the thresholds. Nothing to '
+                  f'align, so no tree; group skipped and the rest of the run continues.')
+            return {}, group
         df = pd.concat(df_list, ignore_index=True)
         df_ref = df.drop_duplicates(subset='abs_pos', keep="first") # df_ref will be all abs_pos per group.  completion of first iteration
         norm_sample_dict={}
-        position_list=[]
-        position_list_parse_test = []
-        for sample in sample_dict.keys(): # update grouping sample_dict with normalized dataframes
+        # The parsimony test, kept O(positions) in memory.  It used to extend
+        # two lists with one abs_pos+ALT string per sample per position (one of
+        # them never read) and count them: about 27 GB for an all-VCF group of
+        # 10,000 samples x 20,000 positions.  A position is uninformative when
+        # every sample carries the same single-base call there, which is "no
+        # sample differs from the first" -- the same test, as a boolean mask.
+        undetermined = []       # samples with no determined base at the group's positions
+        embedded_added = {}   # sample -> positions whose call came from a multi-base record
+        # Set in __init__; created here too for a Group built without it (tests, pickles).
+        if not hasattr(self, 'embedded_cells'):
+            self.embedded_cells = defaultdict(int)
+            self.embedded_now_uninformative = defaultdict(set)
+
+        def normalize_one(sample, quiet=False):
+            '''
+            One sample over the group's positions: (normalized calls as an
+            abs_pos/ALT frame, the parsimony-test calls as a Series indexed by
+            abs_pos, the positions whose call came from a multi-base record).
+            quiet suppresses the messages and records for the rare second pass
+            below, which repeats the same arithmetic.
+            '''
+            embedded_positions = set()
             # dataframes_names_updated contains all SNPs
             # dataframe_essentials contains good SNP positions
             sample_df = self.dataframes_names_updated[sample]
@@ -948,6 +1405,16 @@ class Group():
             # SettingWithCopyWarning that would have said so is suppressed module-wide.
             sample_df = sample_df[sample_df['abs_pos'].isin(df_ref['abs_pos'])].copy() # this will normalize positions
             #https://stackoverflow.com/questions/27673231/why-should-i-make-a-copy-of-a-data-frame-in-pandas
+            # A group position with no record of its own may lie inside one of the
+            # sample's multi-base records.  Its base is read from that record
+            # (_embedded_calls) instead of falling through to the reference below.
+            embedded = self._embedded_calls(sample)
+            if not embedded.empty:
+                add = embedded[embedded['abs_pos'].isin(df_ref['abs_pos'])
+                               & ~embedded['abs_pos'].isin(sample_df['abs_pos'])]
+                if not add.empty:
+                    sample_df = pd.concat([sample_df, add], ignore_index=True)
+                    embedded_positions = set(add['abs_pos'])
             sample_df_parse_test = sample_df.copy() # to use below
             sample_df.loc[sample_df['ALT'].str.len() > 1, 'ALT'] = 'N'
             sample_df.loc[sample_df['ALT'] == 'N', 'AC'] = AC_HOMOZYGOUS # allow the above line to pass ambigious if needed
@@ -959,14 +1426,22 @@ class Group():
             # unrecognised pair now becomes N, matching how the lines below already
             # handle uncertainty, and the count is reported rather than hidden
             # behind --debug.
+            # Vectorized.  This was an iterrows loop with a try/except per row,
+            # the slowest Python loop of the stage on groups with many mixed
+            # calls.  Same result: a known REF/ALT pair becomes its IUPAC code,
+            # anything else becomes N and is counted.
             unresolved = []
-            for index, row in sample_df.loc[sample_df['AC'] == AC_HETEROZYGOUS].iterrows():
-                try:
-                    sample_df.at[index, 'ALT'] = self.ambigious_lookup[row['REF'] + row['ALT']]
-                except (KeyError, TypeError):
-                    sample_df.at[index, 'ALT'] = 'N'
-                    unresolved.append(f"{row['abs_pos']} {row['REF']}/{row['ALT']}")
-            if unresolved:
+            het = sample_df['AC'] == AC_HETEROZYGOUS
+            if het.any():
+                het_rows = sample_df.loc[het]
+                keys = het_rows['REF'].fillna('').astype(str) + het_rows['ALT'].fillna('').astype(str)
+                mapped = keys.map(self.ambigious_lookup)
+                missing = mapped.isna()
+                if missing.any():
+                    unresolved = [f"{row.abs_pos} {row.REF}/{row.ALT}"
+                                  for row in het_rows.loc[missing].itertuples()]
+                sample_df.loc[het, 'ALT'] = mapped.fillna('N')
+            if unresolved and not quiet:
                 print(f'  {sample}: {len(unresolved)} heterozygous position(s) had no '
                       f'IUPAC code for their REF/ALT pair and were called N '
                       f'(first: {unresolved[0]})')
@@ -985,19 +1460,20 @@ class Group():
                 mask = sample_df['QUAL'].notna() & (sample_df['QUAL'] < self.n_threshold) & (sample_df['ALT'] != '-')
                 sample_df.loc[mask, 'ALT'] = sample_df['REF']
             except (ValueError) as e:
-                if self.debug:
-                    print('\n\t#####\n\t##### {}, Sample: {}\n\t#####\n'.format(e, sample))
+                # Said and recorded, not hidden behind --debug: if this ever
+                # fires, positions below the N threshold keep their ALT and
+                # would be published as confident calls.
+                if not quiet:
+                    self.__dict__.setdefault('rewrite_errors', {})[(group, sample)] = f'{type(e).__name__}: {e}'
+                    print(f'\n### {group} / {sample}: the call rewrite failed ({e}); low-quality '
+                          f'positions of this sample may keep their ALT. See the summary.\n')
 
             sample_df = sample_df[['abs_pos', 'ALT']] # no longer need other columns
             # sample_df = sample_df.replace(np.nan, '-') # change zero coverage to -
             df_merged = sample_df.merge(df_ref, left_on='abs_pos', right_on='abs_pos', how='outer') # finish normalizing if df doesn't include all position in group
             df_merged['ALT'] = np.where(df_merged['ALT'].notna(), df_merged['ALT'], df_merged['REF']) # merge REF from df_ref to ALT column
             df_merged['ALT'] = df_merged['ALT'].fillna('-')
-            
-            # df_merged[~sample_df.isin(df_ref)].dropna() #make sure only those position in df_ref are being used | not sure this is needed
-            position_list.extend(list(df_merged['abs_pos'] + df_merged['ALT'])) #make position unique on ALT call for parsimony selection
-            norm_sample_dict[sample] = df_merged[['abs_pos', 'ALT']]
-            
+
             ####
             #Do not include low quality calls when determining if position is parsimonious.  Only include calls with QUAL >= qual_threshold [150]
             sample_df_parse_test['ALT'] = sample_df_parse_test['ALT'].replace('.', '-')
@@ -1005,32 +1481,104 @@ class Group():
                 sample_df_parse_test.loc[sample_df_parse_test['REF'].str.len() > 1, 'REF'] = 'N' #if REF call is indel change to N to maintain equal sequence length for all samples
                 sample_df_parse_test.loc[sample_df_parse_test['QUAL'] < self.qual_threshold, 'ALT'] = sample_df_parse_test['ALT'] # change n_threshold from above to qual threshold skipping the Ns when determining if position is parsimonious AND changed to 'ALT'.  So, if there are just a few low quality represented the SNP position will be seen as parisomonious uninformative and removed.
             except (ValueError) as e:
-                if self.debug:
-                    print('\n\t#####\n\t##### {}, Sample: {}\n\t#####\n'.format(e, sample))
+                if not quiet:
+                    self.__dict__.setdefault('rewrite_errors', {})[(group, sample)] = f'{type(e).__name__}: {e}'
+                    print(f'\n### {group} / {sample}: the parsimony-test rewrite failed ({e}). '
+                          f'See the summary.\n')
             sample_df_parse_test = sample_df_parse_test[['abs_pos', 'ALT']] # no longer need other columns
             # sample_df_parse_test = sample_df_parse_test.replace(np.nan, '-') # change zero coverage to -
             df_merged_parse_test = sample_df_parse_test.merge(df_ref, left_on='abs_pos', right_on='abs_pos', how='outer') # finish normalizing if df doesn't include all position in group
             df_merged_parse_test['ALT'] = np.where(df_merged_parse_test['ALT'].notna(), df_merged_parse_test['ALT'], df_merged_parse_test['REF']) # merge REF from df_ref to ALT column
             df_merged_parse_test['ALT'] = df_merged_parse_test['ALT'].fillna('-')
-            position_list_parse_test.extend(list(df_merged_parse_test['abs_pos'] + df_merged_parse_test['ALT'])) #make position unique on ALT call for parsimony selection
+            calls = df_merged_parse_test.set_index('abs_pos')['ALT']
             ####
+            return df_merged[['abs_pos', 'ALT']], calls, embedded_positions
 
-        #find parsimonies uninformative positions
-        # this test is on the ALT being the same per sample
-        counter = Counter(position_list_parse_test)
-        most_common = counter.most_common()
-        most_common = dict(most_common)
-        parsimony_positions=[]
-        for pos, count in most_common.items():
-            if count == len(norm_sample_dict):
-                parsimony_positions.append(pos[:-1]) #drop the ALT
+        def parsimony_uninformative(calls_of_samples):
+            '''
+            The positions where every sample carries the same call.  The old
+            count-based test built one string per sample per position and
+            dropped its last character to recover the position, so it only ever
+            removed positions whose shared call was one character long; that
+            condition is kept explicitly, so the result is unchanged.
+            '''
+            first_calls = differs = None
+            for calls in calls_of_samples:
+                if first_calls is None:
+                    first_calls = calls
+                    differs = pd.Series(False, index=first_calls.index)
+                else:
+                    differs = differs | (calls.reindex(first_calls.index) != first_calls)
+            if first_calls is None:
+                return []
+            same = ~differs & (first_calls.astype(str).str.len() == 1)
+            return list(first_calls.index[same])
+
+        def first_pass():
+            for sample in sample_dict.keys(): # update grouping sample_dict with normalized dataframes
+                norm_df, calls, emb = normalize_one(sample)
+                if norm_df['ALT'].isin(['-', 'N']).all():
+                    # No determined base at any of the group's positions ('-' or
+                    # N everywhere).  RAxML exits on such a sequence ("sequences
+                    # that consist entirely of undetermined values") and the
+                    # whole group lost its table and tree.  The sample is left
+                    # out of this group before the parsimony test; it is named in
+                    # the terminal and the summary and stays in every other
+                    # group it belongs to.
+                    undetermined.append(sample)
+                    continue
+                if emb:
+                    embedded_added[sample] = emb
+                norm_sample_dict[sample] = norm_df
+                yield calls
+
+        parsimony_positions = parsimony_uninformative(first_pass())
+        retained = df_ref[~df_ref['abs_pos'].isin(parsimony_positions)]
+
+        # A sample whose only determined bases sit at positions the test just
+        # removed is still all '-'/N over the retained positions, and RAxML
+        # would exit on it just the same.  Leave those out too and repeat the
+        # test without them until nothing changes (rare: once per group with
+        # such a sample, never otherwise).
+        while len(retained) and norm_sample_dict:
+            kept = set(retained['abs_pos'])
+            late = [s for s, d in norm_sample_dict.items()
+                    if d.loc[d['abs_pos'].isin(kept), 'ALT'].isin(['-', 'N']).all()]
+            if not late:
+                break
+            for s in late:
+                del norm_sample_dict[s]
+                embedded_added.pop(s, None)
+                undetermined.append(s)
+            parsimony_positions = parsimony_uninformative(
+                normalize_one(s, quiet=True)[1] for s in norm_sample_dict)
+            retained = df_ref[~df_ref['abs_pos'].isin(parsimony_positions)]
+
+        if undetermined:
+            # setdefault: a Group built without __init__ (tests, pickles) has no such attribute.
+            self.__dict__.setdefault('undetermined_in_group', defaultdict(list))[group].extend(undetermined)
+            print(f'  {group}: {len(undetermined)} sample(s) have no determined base at any '
+                  f'of the group\'s informative positions and are left out of this '
+                  f'group\'s tree and table: {", ".join(undetermined)}')
+            if not norm_sample_dict:
+                print(f'  {group}: no sample can be placed. Nothing to align, so no tree; '
+                      f'group skipped and the rest of the run continues.')
+                return {}, group
         # Every sample was normalized against df_ref by an outer merge, so all of
         # them carry the same positions, and the same positions are removed from
         # each.  They therefore empty out together: one sample having nothing left
         # means the whole group has nothing left.  Reported as a property of the
         # group rather than of a sample, because naming a sample here reads as
         # "that VCF is malformed" when the sample is only the first one iterated.
-        retained = df_ref[~df_ref['abs_pos'].isin(parsimony_positions)]
+        # Count the calls read from multi-base records that stay in this group's
+        # table.  A position can also leave the table because of them: with the
+        # sample's base read correctly, every sample in the group may now carry
+        # the same base, and the position is then not informative.
+        kept = set(retained['abs_pos'])
+        uninformative = set(parsimony_positions)
+        for sample, positions in embedded_added.items():
+            self.embedded_cells[sample] += len(positions & kept)
+            self.embedded_now_uninformative[group] |= positions & uninformative
         if retained.empty:
             # A one-sample group is the common case and deserves to be named as
             # such: with a single sample every position is trivially uninformative,
@@ -1103,13 +1651,65 @@ class Group():
         self.raxml_version = tree.raxml_version
         # Only run html_tree if the option is specified
         if self.html_tree:
-            try:
-                if hasattr(tables, 'table_to_tree_path') and tables.table_to_tree_path:
-                    run_with_timeout(html_tree, 900, tables.table_to_tree_path)
-                else:
-                    print('{} HTML tree generation skipped - large dataset split into multiple files'.format(group))
-            except TimeoutError:
-                print('{} HTML tree generation timed out after 15 minutes'.format(group))
+            self.html_tree_build(group, tables)
+
+    @staticmethod
+    def _html_tree_timeout(tables):
+        '''
+        Seconds allowed for one group's HTML tree: VSNP3_HTML_TREE_TIMEOUT when
+        set, otherwise 900, raised for large groups.  Measured at about 34 s for
+        1,000 samples and 124 s for 2,000, roughly quadratic; twice that fit is
+        allowed, so the all-VCF tree of a 10,000-sample run (about 50 minutes)
+        is not cut off by a constant written for a few hundred samples.
+        '''
+        try:
+            base = int(str(os.environ.get('VSNP3_HTML_TREE_TIMEOUT') or '').strip() or 900)
+        except ValueError:
+            base = 900
+        df = getattr(tables, 'table_to_tree_df', None)
+        samples = len(df) if df is not None else 0
+        return max(base, int(6.2e-5 * samples * samples))
+
+    def html_tree_build(self, group, tables):
+        '''
+        The HTML tree for one group, in a child process with a timeout.  A
+        failure is recorded in html_tree_failures and the run goes on.
+        '''
+        try:
+            if hasattr(tables, 'table_to_tree_path') and tables.table_to_tree_path:
+                # The cascade1 frame goes with the path, so the child does
+                # not read the workbook it was just written from back
+                # through openpyxl (5.6 s at 400 samples, longer than the
+                # tree itself now takes).
+                # raise_errors: an exception in html_tree reaches the
+                # wrapper with its message.  Without it html_tree prints
+                # the error and returns 1, which came back here as a
+                # normal result, so the group was never listed as failed.
+                timeout = self._html_tree_timeout(tables)
+                status = run_with_timeout(html_tree, timeout, tables.table_to_tree_path,
+                                          df=getattr(tables, 'table_to_tree_df', None),
+                                          raise_errors=True)
+                if status not in (0, None):
+                    raise RuntimeError(f'html_tree returned {status}; its error is '
+                                       f'printed in the terminal output')
+            else:
+                # Said in the summary too: the tree was silently absent for
+                # exactly the largest groups.
+                reason = (getattr(tables, 'html_tree_skipped', None)
+                          or 'table split into several workbooks; no HTML tree is built from a split table')
+                self.html_tree_failures[group] = reason
+                print(f'{group} HTML tree not built: {reason}')
+        except TimeoutError:
+            self.html_tree_failures[group] = (f'timed out after {timeout} s; set VSNP3_HTML_TREE_TIMEOUT '
+                                              f'(seconds) to allow more')
+            print(f'{group} HTML tree generation timed out after {timeout} s '
+                  f'(VSNP3_HTML_TREE_TIMEOUT raises the limit)')
+        except RuntimeError as e:
+            # The tables and the tree for this group are already written;
+            # only the HTML view is missing.  Before run_with_timeout
+            # reported this, a crash inside html_tree hung the whole run.
+            self.html_tree_failures[group] = str(e).splitlines()[0]
+            print('{} HTML tree generation failed: {}'.format(group, e))
 
 if __name__ == "__main__": # execute if directly access by the interpreter
     parser = argparse.ArgumentParser(prog='PROG', formatter_class=argparse.RawDescriptionHelpFormatter, description=textwrap.dedent('''\

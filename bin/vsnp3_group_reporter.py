@@ -17,6 +17,16 @@ class GroupLookupError(RuntimeError):
     '''Group assignment could not be carried out.  Distinct from "no group file".'''
 
 
+class NoDefiningSnpWorkbook(GroupLookupError):
+    '''
+    The reference type has no defining-SNP workbook, so there is nothing to
+    look groups up in.  A configuration state, not a failure: step 1 reports
+    it as "group file not provided".  Without this, pd.ExcelFile(None) raised
+    "Invalid file path or buffer object type" and the sample was stamped
+    "group lookup FAILED".
+    '''
+
+
 class GroupReporter:
 
     def __init__(self, vcf, reference_type=None):
@@ -29,6 +39,9 @@ class GroupReporter:
         self.error = None
 
         excel_path = reference_options.defining_snps
+        if not excel_path:
+            raise NoDefiningSnpWorkbook(
+                f'reference type {reference_type} has no defining-SNP workbook')
         xl = pd.ExcelFile(excel_path)
         sheet_names = xl.sheet_names
         ws = pd.read_excel(excel_path, sheet_name=sheet_names[0])
@@ -64,7 +77,7 @@ class GroupReporter:
         self.mixed_defining_snps = mixed_defining_snps
 
     def read_vcf(self, path):
-        with open(path, 'r') as f:
+        with open(path, 'r', encoding='utf-8', errors='replace') as f:
             lines = [l for l in f if not l.startswith('##')]
         df = pd.read_csv(
             io.StringIO(''.join(lines)),
@@ -99,6 +112,14 @@ class GroupReporter:
         '''
         Positions in this VCF that could serve as defining SNPs.
 
+        The record test is step 2's (Group._passing in
+        vsnp3_group_on_defining_snps.py, step2_snp_counts in
+        vsnp3_zero_coverage.py): single-base REF and ALT, QUAL above
+        qual_threshold, MQ at or above mq_threshold.  It used to be MQ strictly
+        above the threshold with no ALT length test, so a defining SNP at MQ
+        exactly 56, or a multi-base ALT, was grouped differently in the step 1
+        "Groups" field than in step 2.
+
         Returns a 3-tuple on every path.  Both error paths used to return a
         4-tuple, and get_groups() unpacks 3, so any parse problem raised
         ValueError -- which vsnp3_step1.py caught and reported as "group file not
@@ -129,7 +150,8 @@ class GroupReporter:
                 alt_value = record.ALT
                 called = (pd.notna(alt_value) and str(alt_value) != "None"
                           and alt_value != "." and len(str(record.REF)) == 1
-                          and record_qual > qual_threshold and record.MQ > mq_threshold)
+                          and len(str(alt_value)) == 1
+                          and record_qual > qual_threshold and record.MQ >= mq_threshold)
                 if called and record.AC == AC_HOMOZYGOUS:
                     found_positions[absolute_position] = record.REF
                 if called and record.AC == AC_HETEROZYGOUS:

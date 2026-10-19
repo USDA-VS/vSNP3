@@ -57,14 +57,17 @@ class Remove_From_Analysis:
         if df.index.empty:  # or: if len(df.index) == 0:
             print(f'{bcolors.YELLOW}WARNING: Excel file is empty or has no valid data{bcolors.ENDC}')
             self.remove_list = []
+            self.entries = []
         else:
             # Your existing loop code works perfectly
             remove_list = []
+            entries = []        # the worksheet's names, one per row, for reporting
             for each_sample in df.index:
                 # Convert to string in case of numeric values
                 sample_name = str(each_sample).strip()
                 if not sample_name:  # Skip empty sample names
                     continue
+                entries.append(sample_name)
                 
                 # Use Path.joinpath for robust cross-platform path handling
                 base_path = working_dir_path / sample_name
@@ -77,7 +80,8 @@ class Remove_From_Analysis:
                 remove_list.append(str(base_with_zc_ext))  # allow _zc to not be specified
             
             self.remove_list = remove_list
-        
+            self.entries = entries
+
         self.excel_remove = excel_remove
         self.working_directory = working_directory
 

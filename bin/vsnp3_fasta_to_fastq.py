@@ -24,14 +24,20 @@ ambiguity_codes = {
     'H': ['A', 'C', 'T'], 'V': ['A', 'C', 'G'], 'N': ['A', 'T', 'C', 'G']
 }
 
+def reads_for_length(sequence_length, coverage, read_length):
+    '''Read pairs that give `coverage` over a sequence of this length.'''
+    return int(float(sequence_length * coverage) / float(read_length))
+
+
 class Fasta_to_Paired_Fastq:
 
-    def __init__(self, fasta_file, coverage, read_length):
+    def __init__(self, fasta_file, coverage, read_length, seed=0):
         self.fasta_file = fasta_file
         self.coverage = coverage
         self.read_length = read_length
+        self.seed = seed
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-        
+
         # Validate inputs
         if not os.path.exists(fasta_file):
             raise FileNotFoundError("Input FASTA file not found: {}".format(fasta_file))
@@ -39,7 +45,10 @@ class Fasta_to_Paired_Fastq:
             raise ValueError("Coverage must be positive, got: {}".format(coverage))
         if read_length <= 0:
             raise ValueError("Read length must be positive, got: {}".format(read_length))
-            
+
+        # Seeded, so the same FASTA gives the same reads on every run and a
+        # converted genome can be re-run and compared.  --seed changes it.
+        random.seed(seed)
         self.process_fasta(fasta_file, coverage, read_length)
 
     def fake_quality_scores(self, length):
@@ -51,8 +60,9 @@ class Fasta_to_Paired_Fastq:
         """Calculate the total genome length from the input FASTA file."""
         total_length = 0
         try:
-            for record in SeqIO.parse(fasta_file, "fasta"):
-                total_length += len(record.seq)
+            with open(fasta_file, encoding='utf-8', errors='replace') as handle:
+                for record in SeqIO.parse(handle, "fasta"):
+                    total_length += len(record.seq)
         except Exception as e:
             raise RuntimeError("Error reading FASTA file {}: {}".format(fasta_file, str(e)))
         
@@ -122,13 +132,13 @@ class Fasta_to_Paired_Fastq:
         """Process the input FASTA file and generate paired-end FASTQ files."""
         file_prefix = os.path.splitext(os.path.basename(fasta_file))[0]
         total_length = self.calculate_total_genome_length(fasta_file)
-        
+
         # Use float division to ensure precision, then convert to int
-        num_reads = int(float(total_length * coverage) / float(read_length))
-        
+        num_reads = reads_for_length(total_length, coverage, read_length)
+
         if num_reads <= 0:
             raise ValueError("Calculated number of reads is zero or negative. Check coverage and read length parameters.")
-        
+
         logging.info("Total genome length: {} bp".format(total_length))
         logging.info("Target coverage: {}X".format(coverage))
         logging.info("Generating {} reads of length {} bp".format(num_reads, read_length))
@@ -140,15 +150,25 @@ class Fasta_to_Paired_Fastq:
         barcode = "AAACCCGGGTTT"
 
         try:
-            with gzip.open(fastq_r1_file, 'wt') as r1, gzip.open(fastq_r2_file, 'wt') as r2:
+            with gzip.open(fastq_r1_file, 'wt') as r1, gzip.open(fastq_r2_file, 'wt') as r2, \
+                    open(fasta_file, encoding='utf-8', errors='replace') as fasta_handle:
                 read_counter = 1
-                for record in SeqIO.parse(fasta_file, "fasta"):
+                for record in SeqIO.parse(fasta_handle, "fasta"):
                     sequence = str(record.seq)
                     if len(sequence) == 0:
                         logging.warning("Skipping empty sequence record: {}".format(record.id))
                         continue
-                        
-                    reads = self.generate_paired_reads(sequence, num_reads, read_length)
+
+                    # Each record gets the reads its own length calls for.  The
+                    # whole-genome count was used for every record, so a
+                    # two-chromosome genome came out at twice the coverage and a
+                    # 100-contig draft at a hundred times it.
+                    record_reads = reads_for_length(len(sequence), coverage, read_length)
+                    if record_reads <= 0:
+                        logging.warning("Skipping record {} ({} bp): too short for one read at "
+                                        "{}X".format(record.id, len(sequence), coverage))
+                        continue
+                    reads = self.generate_paired_reads(sequence, record_reads, read_length)
                     
                     for seq_r1, seq_r2, x_coord, y_coord, unique_id in reads:
                         # Standard Illumina-like headers without problematic characters
@@ -182,12 +202,13 @@ if __name__ == "__main__":
     parser.add_argument("-i", "--input", required=True, help="Input FASTA file")
     parser.add_argument("-c", "--coverage", type=int, default=100, help="Desired coverage (default: 100X)")
     parser.add_argument("-l", "--read_length", type=int, default=150, help="Read length (default: 150)")
+    parser.add_argument("-s", "--seed", type=int, default=0, help="Random seed for read positions and qualities (default: 0, so the same FASTA gives the same reads every run)")
     parser.add_argument('-v', '--version', action='version', version='{}: version {}'.format(os.path.basename(__file__), __version__))
-    
+
     args = parser.parse_args()
 
     try:
-        fasta_to_paired_fastq = Fasta_to_Paired_Fastq(args.input, args.coverage, args.read_length)
+        fasta_to_paired_fastq = Fasta_to_Paired_Fastq(args.input, args.coverage, args.read_length, seed=args.seed)
         print("Paired-end FASTQ files created: \n\t{}\n\t{}".format(
             fasta_to_paired_fastq.fastq_r1_file, 
             fasta_to_paired_fastq.fastq_r2_file

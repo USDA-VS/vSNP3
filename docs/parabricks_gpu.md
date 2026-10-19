@@ -2,6 +2,13 @@
 
 This document describes the GPU acceleration implementation for vSNP3 using Parabricks, created in the `parabricks-gpu-acceleration` branch.
 
+> **Branch only.** The `--gpu` option of `vsnp3_step1.py` exists only on the
+> `parabricks-gpu-acceleration` branch. The released vsnp3 (`main`, 3.37 on bioconda)
+> does not accept it and exits with an argparse error if it is given.
+> `internal/git_gpu_vsnp3_step1.sh` therefore checks `vsnp3_step1.py --help` for the
+> flag first: when the checked-out code understands it the flag is added, otherwise the
+> script says so and runs the ordinary CPU pipeline on the GPU node.
+
 ## Overview
 
 The GPU acceleration implementation replaces CPU-intensive BWA alignment and FreeBayes variant calling with Parabricks GPU-accelerated equivalents:
@@ -77,7 +84,8 @@ After setup, using GPU acceleration is simple:
 # Navigate to your data directory
 cd /project/mycobacteria_brucella/my_samples/
 
-# Submit GPU job - script automatically finds container and adds --gpu flag
+# Submit GPU job - script finds the container and adds --gpu when the checked-out
+# vsnp3_step1.py accepts it (the parabricks-gpu-acceleration branch; see above)
 sbatch /home/tstuber/git/gitlab/vsnp3/internal/git_gpu_vsnp3_step1.sh -r reference.fasta
 ```
 
@@ -87,7 +95,8 @@ sbatch /home/tstuber/git/gitlab/vsnp3/internal/git_gpu_vsnp3_step1.sh -r referen
 # Activate environment (use conda activate, not mamba activate)
 conda activate vsnp3_parabricks_3.33
 
-# Run with --gpu flag (container auto-detected)
+# Run with --gpu flag (container auto-detected).  Branch only: on main, --gpu is
+# an unknown option and vsnp3_step1.py exits 2.
 vsnp3_step1.py -r1 sample_R1.fastq.gz -r2 sample_R2.fastq.gz --gpu -r reference.fasta
 ```
 
@@ -100,7 +109,7 @@ vsnp3_step1.py -r1 sample_R1.fastq.gz -r2 sample_R2.fastq.gz --gpu -r reference.
   - Current working directory
   - Other standard locations
 - ✅ **Tests container functionality** before use
-- ✅ **Adds `--gpu` flag** to vsnp3_step1.py automatically
+- ✅ **Adds `--gpu` flag** to vsnp3_step1.py when its `--help` lists it (branch only); otherwise says so and runs on CPU
 - ✅ **Provides clear instructions** if container missing
 
 **No manual container copying or path management needed!**
@@ -123,7 +132,8 @@ vsnp3_step1.py -r1 sample_R1.fastq.gz -r2 sample_R2.fastq.gz --gpu -r reference.
    - Optimized for GPU nodes (partition: prod-compute-gpu)
    - Reduced CPU allocation (12 CPUs vs 48)
    - GPU resource allocation (#SBATCH --gres=gpu:1)
-   - Uses vsnp3_parabricks_3.33 environment
+   - Uses the `vsnp3_parabricks_<version>` environment, falling back to the newest
+     `vsnp3_parabricks_*` present (the shared install was built as `vsnp3_parabricks_3.33`)
 
 ### Processing Flow Comparison
 

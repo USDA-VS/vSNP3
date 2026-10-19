@@ -7,13 +7,42 @@ import argparse
 import textwrap
 
 
+def best_taxid(lca_mapping):
+    '''
+    The taxid with the most k-mer hits in one kraken2 LCA mapping string, or 0.
+
+    The mapping looks like "0:12 1763:5 |:| 0:10": "taxid:count" pairs, with
+    " |:| " separating the two mates of a pair.  Taxid 0 (unclassified k-mers)
+    never wins.  Returned as an int, the type of kraken2's taxid column.
+    '''
+    accumulate = {}
+    for lca in str(lca_mapping).replace(' |:|', ' ').split():
+        if ':' in lca:
+            taxid, count = lca.rsplit(':', 1)
+            try:
+                accumulate[taxid] = accumulate.get(taxid, 0) + int(count)
+            except ValueError:
+                continue
+    highest_taxid, highest_value = 0, 0
+    for taxid, value_sum in accumulate.items():
+        if value_sum > highest_value and taxid != '0':
+            try:
+                highest_taxid = int(taxid)
+            except ValueError:
+                continue
+            highest_value = value_sum
+    return highest_taxid
+
+
 def force_tax_number(kraken_output):
     df = pd.read_csv(kraken_output, sep='\t', header=None)
     target_rows = df[(df[2] == 0) & (df[0] == 'C')]
     mapping = target_rows.iloc[:,-1]
     mapping = mapping.to_frame()
-    # Fixed replacement method - the original syntax is incorrect
-    mapping = mapping.replace({' |:|': ''}, regex=True)
+    # The mapping strings are parsed as they are.  A DataFrame.replace({' |:|': ''},
+    # regex=True) used to sit here; as a regex ' |:|' means "a space, OR a colon,
+    # OR the empty string", so it deleted every space and colon from every mapping
+    # ("0:12 1763:5 |:| 0:10" became "01217635||010") before anything was read.
 
     total_read_count = len(df)
     classified_no_taxid_count = len(target_rows)
@@ -22,25 +51,10 @@ def force_tax_number(kraken_output):
 
     corrected_dict = {}
     for ir, row in mapping.itertuples():
-        accumulate = {}
-        # Fixed replacement method
-        row = row.replace(' |:|', '', regex=True) if isinstance(row, str) else row
-        # Check if row is a string before splitting
+        # str.replace takes no regex= keyword: the two calls that used to be here
+        # raised TypeError on the first classified read with taxid 0.
         if isinstance(row, str):
-            split_row = row.replace(' |:|', '', regex=True).split()
-            for lca in split_row:
-                if ":" in lca:
-                    taxid, count = lca.split(":")
-                    accumulate.setdefault(taxid, [])
-                    accumulate[taxid].append(count)
-            highest_taxid = '0'
-            highest_value = 0
-            for taxid, value_list in accumulate.items():
-                value_sum = sum(list(map(int, value_list)))
-                if value_sum > highest_value and taxid != '0':
-                    highest_taxid = taxid
-                    highest_value = value_sum
-            corrected_dict[ir] = highest_taxid
+            corrected_dict[ir] = best_taxid(row)
 
     corrected_df = pd.DataFrame.from_dict(corrected_dict, orient='index')
     if not corrected_df.empty:  # Only rename if DataFrame is not empty

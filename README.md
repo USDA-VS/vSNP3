@@ -52,6 +52,7 @@ For GUI questions or bugs, use the [bioinformatic_diagnostic_tools issue tracker
 - Produces BAM and VCF files, annotated SNP tables, and phylogenetic trees
 - Tracks positions with no coverage, so missing data isn't mistaken for a match
 - Marks mixed positions with IUPAC codes, which helps you spot mixed strains
+- Takes nanopore reads too, and puts them in the same tables and trees as Illumina reads
 
 ## How it works
 
@@ -101,6 +102,8 @@ Example output:
   <img src="./docs/img/step2_figtree.png" alt="Step 2 tree" width="400"/>
   <img src="./docs/img/step2_table.png" alt="Step 2 SNP table" width="600"/>
 </p>
+
+**View and share the trees.** The [Phylogenetic Tree HTML Viewer](https://usda-vs.github.io/phylogenetic-tree-html-viewer/) opens the Newick tree from any Step 2 group folder in your browser, shows branch lengths as SNP counts, and lets you reroot it, colour it, and share it as a link, a file, or a PDF. Nothing is uploaded and there is nothing to install.
 
 ## An example
 
@@ -161,7 +164,7 @@ You can edit this file as you learn more, adding groups for new lineages or new 
 If you're using the GUI, the [training guide](https://kapurlab.github.io/bioinformatic_diagnostic_tools/vsnp3_gui_training.html#start) covers installation, so you can skip this section. If you're running from the terminal, follow the steps below:
 
 ```bash
-conda create -c conda-forge -c bioconda -n vsnp3 vsnp3=3.36
+conda create -c conda-forge -c bioconda -n vsnp3 vsnp3=3.37
 conda activate vsnp3
 ```
 
@@ -198,6 +201,24 @@ Run Step 2 to build the SNP table and tree. You can run this on any set of sampl
 cd ~/vsnp3_test_dataset/AF2122_test_files/step2
 vsnp3_step2.py -a -t Mycobacterium_AF2122
 ```
+
+## Nanopore reads
+
+Most samples are Illumina paired-end reads. Nanopore (long-read) samples run through the same two steps and end up in the same tables and trees, from a single FASTQ:
+
+```bash
+vsnp3_step1.py -r1 sample.fastq.gz -t Mycobacterium_AF2122
+```
+
+Step 1 recognises a nanopore sample on its own (single-end reads averaging more than 701 bases); `-p` forces it. The reads are aligned with minimap2 and the SNPs are called with bcftools, and the VCF is then given a QUAL that means the same as the freebayes QUAL of an Illumina sample: the Phred-scaled probability that the site is a variant, computed from the reads supporting it, the error rate measured in that sample and the usual variant prior. So Step 2 reads a nanopore VCF with the same thresholds as any other, and Illumina and nanopore samples of the same isolate land together in the tree.
+
+Two things to expect:
+
+- A nanopore read carries less evidence than an Illumina read, so more reads are needed for a confident call: at a typical 2% read error rate, about 11 clean reads where Illumina needs about 6. Below that the position is N for that sample, never the reference. Sequence to 20x or more: in the validation a 10x nanopore sample gave only a third of its SNPs, a 20x sample 92%, and 30x 98-100%.
+- Calls supported on one strand only, or sitting in or beside a homopolymer run of six bases or more, are shown as N for that sample. These are the places nanopore reads are least reliable, and N says "uncertain" rather than asserting a SNP or the reference.
+- A site is called mixed (an IUPAC code) only when the mixture of reads is more likely than a homozygous call with the sample's own error rate: at 30x, a minor allele of about a fifth of the reads. A few reference-looking reads at a true SNP, the usual systematic nanopore error, do not make a clonal sample look mixed.
+
+The VCF header records the caller, the measured error rate and every parameter of the model; the Step 1 report shows them under SNPs, and the Step 2 summary lists the long-read samples. Give a nanopore sample a name that differs from its Illumina run of the same isolate, since Step 2 keeps one VCF per sample name. See `vsnp3_longread.py -h` to call or re-score a BAM on its own.
 
 ## Setting up reference types
 
@@ -247,6 +268,17 @@ vSNP3 also comes with scripts for:
 
 See [Additional Tools](./docs/instructions/additional_tools.md) for details.
 
+A few of these scripts call programs that the vsnp3 conda package does not install, in the same way the kraken2 wrapper needs a separate kraken2 environment. Install them separately if you use the script:
+
+| Script | Needs | Install |
+|---|---|---|
+| `vsnp3_bruc_mlst.py` | `picard` | `conda install -c conda-forge -c bioconda picard` |
+| `vsnp3_download_GCA_fasta_get_metadata.py` | NCBI `datasets` | `conda install -c conda-forge ncbi-datasets-cli` |
+| `vsnp3_kraken2_wrapper.py` | `kraken2`, Krona and a database | see [Additional Tools](./docs/instructions/additional_tools.md#krakenkrona) |
+| `vsnp3_ksnp3_wrapper.sh` | `kSNP3`, `MakeKSNP3infile`, `Kchooser`, `nw_display` (newick-utils), `inkscape` for PDFs | kSNP3 is no longer distributed; see the kSNP4 notes in [Additional Tools](./docs/instructions/additional_tools.md#ksnp) |
+
+Everything Step 1 and Step 2 themselves need is in the conda package.
+
 ## What people use it for
 
 - Tracing transmission during outbreaks
@@ -267,4 +299,5 @@ If you use vSNP3 in your work, please [cite the paper](https://bmcgenomics.biome
 
 - [vSNP3 GUI training guide (SOP)](https://kapurlab.github.io/bioinformatic_diagnostic_tools/vsnp3_gui_training.html#start)
 - [vSNP3 orientation slides](https://kapurlab.github.io/bioinformatic_diagnostic_tools/vsnp3_orientation_slides.html)
+- [Phylogenetic Tree HTML Viewer](https://usda-vs.github.io/phylogenetic-tree-html-viewer/): view and share vSNP trees
 - [Documentation from earlier versions](https://github.com/USDA-VS/vSNP/blob/master/docs/detailed_usage.md)

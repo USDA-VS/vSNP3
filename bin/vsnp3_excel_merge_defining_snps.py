@@ -24,7 +24,11 @@ class Expand_Range():
     '''
     def ex_range(self, file=None):
 
-        file_sample_name = re.sub('[.].*', '', file)
+        # Basename without extension.  This stripped from the first '.' of the
+        # whole path, so './old/a.xlsx' and './new/a.xlsx' both became '' and
+        # the two expanded files overwrote each other, after which the merge
+        # compared a file with itself and found no differences.
+        file_sample_name = os.path.splitext(os.path.basename(file))[0]
         # date_stamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
         expanded_file_name = '{}_expanded.xlsx'.format(file_sample_name)
 
@@ -40,6 +44,9 @@ class Expand_Range():
         for column, values in column_lists.items():
             expansion=[]
             group_name = values[0]
+            if len(values) < 2 or not isinstance(values[1], str) or ':' not in values[1]:
+                raise ValueError(f'column "{column}" ({group_name}): the first position cell '
+                                 f'must be chrom:position text, found {values[1] if len(values) > 1 else "nothing"!r}')
             reference = values[1].split(':')[0]
             string_strip = '{}:'.format(reference)
             values = values[1:]
@@ -109,9 +116,9 @@ class Merge_Defining_SNPs():
         def sort_df(df):
             def search_list_for_pattern(lst, pattern):
                 for idx, item in enumerate(lst):
-                    if pattern in item:
-                        break
-                return idx
+                    if isinstance(item, str) and pattern in item:
+                        return idx
+                raise ValueError(f'no column matching "{pattern}" in the second row: {lst}')
             
             second_row = df.iloc[1, :].tolist()
             all_index = search_list_for_pattern(second_row, "-All") # search for "All" column to move left

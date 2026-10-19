@@ -32,10 +32,15 @@ class VCF_Annotation():
 
         annotation = Annotation(gbk_list=gbk_list)
         
+        # Temp files carry the VCF's name: fixed names ('v_header.csv') in the
+        # working directory collided when two annotations ran in one folder.
+        stem = os.path.splitext(os.path.basename(vcf_file))[0]
+        header_csv = f'{stem}_v_header.csv'
+        body_csv = f'{stem}_v_annotated_body.csv'
         # Extract header from VCF file
         try:
-            with open('v_header.csv', 'w+') as header_out:
-                with open(vcf_file) as fff:
+            with open(header_csv, 'w+', encoding='utf-8', errors='replace') as header_out:
+                with open(vcf_file, encoding='utf-8', errors='replace') as fff:
                     for line in fff:
                         if re.search('^#', line):
                             print(line.strip(), file=header_out)
@@ -122,13 +127,14 @@ class VCF_Annotation():
         
         # Write annotated body
         try:
-            vcf_df.to_csv('v_annotated_body.csv', sep='\t', header=False, index=False)
+            vcf_df.to_csv(body_csv, sep='\t', header=False, index=False)
         except Exception as e:
             raise Exception(f"Error writing annotated body: {e}")
         
         # Combine header and body files
-        cat_files = ['v_header.csv', 'v_annotated_body.csv']
-        name = vcf_file.replace('.vcf', '')
+        cat_files = [header_csv, body_csv]
+        # Only the extension: str.replace rewrote every '.vcf' in the full path.
+        name = os.path.splitext(vcf_file)[0]
         output_filename = f'{name}_annotated.vcf'
         
         try:
@@ -141,7 +147,7 @@ class VCF_Annotation():
                     
         # Clean up temporary files
         try:
-            for temp_file in ['v_header.csv', 'v_annotated_body.csv']:
+            for temp_file in [header_csv, body_csv]:
                 if os.path.exists(temp_file):
                     os.remove(temp_file)
         except OSError as e:

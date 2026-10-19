@@ -51,55 +51,74 @@ class FASTQ_Container:
         self.read_quality_average = read_quality_average
 
 
+# seqkit stats -a -T column header -> the name used here.  Looked up by name:
+# the Q20 and Q30 columns used to be taken from positions 14 and 15 of the
+# whitespace-split line, which assumes the N50_num column seqkit added in 2.4;
+# on an older seqkit every sample read AvgQual as its Q30 and was Questionable.
+SEQKIT_COLUMNS = {
+    'file': 'file_name', 'format': 'read_format', 'type': 'seq_type',
+    'num_seqs': 'num_seqs', 'sum_len': 'sum_len', 'min_len': 'min_len',
+    'avg_len': 'avg_len', 'max_len': 'max_len', 'Q1': 'Q1', 'Q2': 'Q2', 'Q3': 'Q3',
+    'sum_gap': 'sum_gap', 'N50': 'N50', 'Q20(%)': 'passQ20', 'Q30(%)': 'passQ30',
+}
+
+
+def parse_seqkit_stats_table(text, fastq_file=''):
+    '''
+    The last data row of `seqkit stats -a` output as {name: string as printed},
+    columns found by header name.  Raises ValueError when a needed column is
+    missing, rather than reading a neighbouring one.
+
+    The default (human) output is parsed, not -T.  The workbook has always held
+    the default strings (thousands separators, "93.61" for Q20(%)), and the
+    tab-separated form is not the same numbers formatted differently: seqkit
+    2.13 prints Q20(%) and Q30(%) there rounded to whole numbers ("94", "90")
+    while its default output keeps two decimals.  Parsing the default output by
+    header name keeps every stored string as it was and survives a column being
+    added, as N50_num was in seqkit 2.4.  Values never contain spaces (vSNP3
+    refuses paths with whitespace), so splitting on runs of spaces is safe.
+    '''
+    lines = [line for line in text.splitlines() if line.strip()]
+    if len(lines) < 2:
+        raise ValueError(f"No output from seqkit stats for {fastq_file}")
+    header = lines[0].split()
+    row = lines[-1].split()
+    if len(row) != len(header):
+        raise ValueError(f"Unexpected seqkit stats output format for {fastq_file}: "
+                         f"{len(header)} header columns, {len(row)} values")
+    by_header = dict(zip(header, row))
+    missing = [column for column in SEQKIT_COLUMNS if column not in by_header]
+    if missing:
+        raise ValueError(f"seqkit stats output for {fastq_file} lacks column(s) "
+                         f"{', '.join(missing)}; seqkit >= 2.1 with -a is required")
+    return {name: by_header[column] for column, name in SEQKIT_COLUMNS.items()}
+
+
 class FASTQ_Stats(Setup):
     """Class to calculate and store FASTQ statistics using seqkit"""
-    
+
     def __init__(self, SAMPLE_NAME=None, FASTQ_R1=None, FASTQ_R2=None, debug=False):
         Setup.__init__(self, SAMPLE_NAME=SAMPLE_NAME, FASTQ_R1=FASTQ_R1, FASTQ_R2=FASTQ_R2, debug=debug)
 
     def _run_seqkit_stats(self, fastq_file):
         """Run seqkit stats command and return parsed results"""
-        temp_file = 'temp_fastq_seqkit_stats.txt'
-        
+        # Named for the sample so two runs in one directory cannot read each
+        # other's table.
+        temp_file = f'{self.sample_name}_temp_fastq_seqkit_stats.txt'
+
         try:
-            # Run seqkit stats command
+            # Default output, read by header name (see parse_seqkit_stats_table
+            # for why not -T).
             result = subprocess.run(
-                ["seqkit", "stats", "-a", "-o", temp_file, fastq_file], 
+                ["seqkit", "stats", "-a", "-o", temp_file, fastq_file],
                 stderr=subprocess.DEVNULL,
                 check=True
             )
-            
+
             # Parse output
-            with open(temp_file, 'r') as fopen:
-                lines = fopen.readlines()
-                if not lines:
-                    raise ValueError(f"No output from seqkit stats for {fastq_file}")
-                    
-                last_line = lines[-1].split()
-                if len(last_line) < 13:
-                    raise ValueError(f"Unexpected seqkit stats output format for {fastq_file}")
-                
-                # Extract stats with safe indexing
-                stats = {
-                    'file_name': last_line[0],
-                    'read_format': last_line[1],
-                    'seq_type': last_line[2],
-                    'num_seqs': last_line[3],
-                    'sum_len': last_line[4],
-                    'min_len': last_line[5],
-                    'avg_len': last_line[6],
-                    'max_len': last_line[7],
-                    'Q1': last_line[8],
-                    'Q2': last_line[9],
-                    'Q3': last_line[10],
-                    'sum_gap': last_line[11],
-                    'N50': last_line[12],
-                    'passQ20': last_line[14] if len(last_line) > 14 else "0",
-                    'passQ30': last_line[15] if len(last_line) > 15 else "0"
-                }
-                
-                return stats
-                
+            with open(temp_file, 'r', encoding='utf-8', errors='replace') as fopen:
+                return parse_seqkit_stats_table(fopen.read(), fastq_file)
+
         except subprocess.CalledProcessError as e:
             logger.error(f"seqkit stats failed for {fastq_file}: {e}")
             raise

@@ -12,10 +12,16 @@
 # before 3.36 the pins existed in five places and the CI conda line had already
 # lost a floor the pip line still carried.
 #
+# The leg `recipe` is always available and needs no ci.yml: it is
+# conda_build/vsnp3.yaml exactly as declared, with no extra pins.  A release
+# folder copied out of the repository has no .github/, so that is the only leg
+# there (and the script says so rather than failing).
+#
 # Typical use, testing both ends of the declared numpy range:
 #
 #   tests/make_test_env.sh floor   vsnp3_floor
 #   tests/make_test_env.sh current vsnp3_current
+#   tests/make_test_env.sh recipe  vsnp3_recipe
 #
 # Only conda-forge and bioconda are used, with `defaults` explicitly excluded --
 # it is not needed, it slows the solve, and on institutional machines its terms
@@ -28,46 +34,53 @@ repo=$(cd "$here/.." && pwd)
 CI="$repo/.github/workflows/ci.yml"
 ENV_YAML="$repo/conda_build/vsnp3.yaml"
 
-for f in "$CI" "$ENV_YAML"; do
-    [ -r "$f" ] || { echo "cannot read $f" >&2; exit 1; }
-done
+[ -r "$ENV_YAML" ] || { echo "cannot read $ENV_YAML" >&2; exit 1; }
+if [ ! -r "$CI" ]; then
+    echo "note: $CI is not here (a release folder has no .github/);" >&2
+    echo "      only the 'recipe' leg -- conda_build/vsnp3.yaml as declared -- is available" >&2
+    CI=""
+fi
 
 # Parsed with the standard library only: this has to run before any environment
 # exists, so pyyaml cannot be assumed.  Both files are plain enough for it.
 read_specs() {
     python3 - "$CI" "$ENV_YAML" "$1" <<'PY'
-import re, sys
+import os, re, sys
 
 ci_path, env_path, leg = sys.argv[1:4]
 
-# Legs from the integration matrix: `- leg: floor` then python/numpy/pandas.
-legs, cur = {}, None
-inside = False
-for line in open(ci_path):
-    if re.match(r'^  \w[\w-]*:\s*$', line):
-        inside = line.strip() == 'integration:'
-    if not inside:
-        continue
-    m = re.match(r'\s*-\s*leg:\s*(\S+)\s*$', line)
-    if m:
-        cur = m.group(1)
-        legs[cur] = {}
-        continue
-    m = re.match(r'\s*(python|numpy|pandas):\s*(.+?)\s*$', line)
-    if m and cur:
-        legs[cur][m.group(1)] = m.group(2).strip().strip("'\"")
+# The recipe leg pins nothing beyond the environment file itself.  CI legs
+# follow, from the integration matrix: `- leg: floor` then python/numpy/pandas.
+legs, cur = {'recipe': {}}, None
+if ci_path and os.path.exists(ci_path):
+    inside = False
+    for line in open(ci_path):
+        if re.match(r'^  \w[\w-]*:\s*$', line):
+            inside = line.strip() == 'integration:'
+        if not inside:
+            continue
+        m = re.match(r'\s*-\s*leg:\s*(\S+)\s*$', line)
+        if m:
+            cur = m.group(1)
+            legs[cur] = {}
+            continue
+        m = re.match(r'\s*(python|numpy|pandas):\s*(.+?)\s*$', line)
+        if m and cur:
+            legs[cur][m.group(1)] = m.group(2).strip().strip("'\"")
 
 if leg == '--list':
     for name, pins in legs.items():
-        print(f"{name:9s} " + '  '.join(f'{k}{v}' if v.startswith(('=', '>', '<'))
-                                        else f'{k} {v}' for k, v in pins.items()))
+        detail = '  '.join(f'{k}{v}' if v.startswith(('=', '>', '<')) else f'{k} {v}'
+                           for k, v in pins.items())
+        print(f"{name:9s} " + (detail or 'conda_build/vsnp3.yaml as declared'))
     sys.exit(0)
 
 if leg not in legs:
-    sys.exit(f"unknown leg '{leg}'. Known: {', '.join(legs) or '(none parsed)'}")
+    sys.exit(f"unknown leg '{leg}'. Known: {', '.join(legs)}")
 
-# Everything except the three the leg pins, taken from the dev environment file,
+# Everything the leg does not pin itself, taken from the dev environment file,
 # which test_release_consistency.py holds identical to meta.yaml.
+pinned = set(legs[leg])
 base, deps = [], False
 for line in open(env_path):
     if line.startswith('dependencies:'):
@@ -79,7 +92,7 @@ for line in open(env_path):
     if not s.startswith('- '):
         continue
     s = s[2:].split('#')[0].strip()
-    if re.split(r'[ >=<]', s)[0] in ('python', 'numpy', 'pandas'):
+    if re.split(r'[ >=<]', s)[0] in pinned:
         continue
     base.append(s)
 
@@ -113,9 +126,9 @@ case "${1:-}" in
         exit 0
         ;;
     '' | -h | --help)
-        sed -n '3,18p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '3,24p' "$0" | sed 's/^# \{0,1\}//'
         echo
-        echo "Legs defined in ci.yml:"
+        echo "Legs:"
         read_specs --list | sed 's/^/  /'
         exit 0
         ;;

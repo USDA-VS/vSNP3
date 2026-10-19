@@ -7,6 +7,7 @@
 4. [kSNP](#ksnp)
 5. [Kraken/Krona](#krakenkreona)
 6. [SRA Tools](#sra-tools)
+7. [Phylogenetic Tree HTML Viewer](#phylogenetic-tree-html-viewer)
 
 ## Introduction
 
@@ -181,6 +182,23 @@ docker run -t --rm -v $PWD:/output:rw -w /output ncbi/sra-tools fasterq-dump -e 
 singularity pull docker://ncbi/sra-tools
 singularity run sra-tools_latest.sif fasterq-dump -e 2 -p SRR6046640
 ```
+
+## Phylogenetic Tree HTML Viewer
+
+**View and share vSNP trees:** [Phylogenetic Tree HTML Viewer](https://usda-vs.github.io/phylogenetic-tree-html-viewer/)
+
+Every Step 2 group folder holds a Newick tree (`<group>-<timestamp>.tre`), the
+SNP alignment FASTA, and the SNP tables. The viewer opens that tree in your
+browser with nothing to install:
+
+- Branch lengths can be shown as SNP counts, read from the SNP table or the
+  alignment FASTA.
+- Reroot, collapse, and colour clades, then share the result as a link (the
+  colours and rooting travel inside the link), as a single self-contained
+  HTML file that works offline, or as a PDF.
+- Nothing is uploaded. The tree stays on your computer.
+
+Source and issues: [USDA-VS/phylogenetic-tree-html-viewer](https://github.com/USDA-VS/phylogenetic-tree-html-viewer).
 
 ## Conclusion
 

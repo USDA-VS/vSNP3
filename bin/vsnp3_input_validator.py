@@ -6,11 +6,11 @@ import os
 import sys
 import re
 import gzip
-import pathlib
-from collections import defaultdict
+import time
+from collections import defaultdict, Counter
+from concurrent import futures
 from dataclasses import dataclass, field
 from typing import List, Dict, Tuple, Optional, Set
-import pandas as pd
 
 
 @dataclass
@@ -20,6 +20,40 @@ class ValidationError:
     error_type: str
     error_message: str
     severity: str  # 'critical', 'warning', 'info'
+
+
+@dataclass
+class VCFHeaderScan:
+    '''
+    What one pass over the START of a VCF found.
+
+    The scan stops after the column header and a few data records, so it costs
+    one buffered read of a few kilobytes per file however large the file is.
+    Everything step 2 needs to decide whether a file can be analysed, and
+    against which reference it was called, is in the header.
+    '''
+    path: str
+    size: int = 0
+    fileformat: bool = False
+    column_header: bool = False
+    columns: int = 0
+    contigs: Tuple[str, ...] = ()        # ##contig IDs, in header order
+    data_chroms: Tuple[str, ...] = ()    # CHROM of the data records scanned
+    data_lines: int = 0
+    short_lines: int = 0                 # scanned data records with < 8 columns
+    data_before_header: bool = False
+    non_ascii: bool = False              # any byte >= 0x80 in the scanned part
+    scanned_to_end: bool = False
+    truncated: bool = False              # the file ends part-way through a record
+    error: Optional[str] = None          # OSError text, when the file could not be read
+
+    @property
+    def reference_label(self) -> Optional[str]:
+        if self.contigs:
+            return self.contigs[0]
+        if self.data_chroms:
+            return self.data_chroms[0]
+        return None
 
 
 @dataclass
@@ -34,7 +68,27 @@ class VCFValidationResults:
     permission_errors: List[str] = field(default_factory=list)
     unreadable_files: List[str] = field(default_factory=list)
     errors: List[ValidationError] = field(default_factory=list)
+    # Kept for callers that read it.  Nothing is rewritten in place any more, so
+    # this stays empty: a non-ASCII byte is tolerated when the file is read, and
+    # is listed in non_ascii_files instead of being "fixed".
     fixed_files: List[Dict[str, str]] = field(default_factory=list)
+    # Valid files that carry no data records at all: a sample with no variant
+    # and no zero-coverage position, i.e. identical to the reference everywhere
+    # it was covered.  Analysed, not excluded.
+    header_only_files: List[str] = field(default_factory=list)
+    non_ascii_files: List[str] = field(default_factory=list)
+    multi_sample_files: Dict[str, int] = field(default_factory=dict)
+    reference_contigs: Tuple[str, ...] = ()
+    reference_file_count: int = 0
+    reference_basis: str = ''
+    # True when fewer than half of the readable files share the dominant
+    # reference.  A minority on another reference is excluded and reported; a
+    # majority lost means the run itself is misconfigured.
+    reference_majority_lost: bool = False
+    # file -> one sentence saying why it is not in valid_files
+    reasons: Dict[str, str] = field(default_factory=dict)
+    notes: List[str] = field(default_factory=list)
+    seconds: float = 0.0
 
     @property
     def total_valid(self) -> int:
@@ -48,10 +102,20 @@ class VCFValidationResults:
     def has_critical_errors(self) -> bool:
         return len(self.reference_mismatches) > 0 or len(self.corrupted_files) > 0
 
+    @property
+    def excluded_files(self) -> List[str]:
+        '''Every file not in valid_files, in input order, each with a reason.'''
+        return list(self.reasons)
+
+    def reason(self, file_path: str) -> str:
+        return self.reasons.get(file_path, '')
+
     def add_error(self, file_path: str, error_type: str, message: str, severity: str = 'warning'):
         """Add a validation error"""
         error = ValidationError(file_path, error_type, message, severity)
         self.errors.append(error)
+        if file_path:
+            self.reasons.setdefault(file_path, message)
 
         # Categorize the error
         if error_type == 'reference_mismatch':
@@ -83,6 +147,133 @@ class VCFValidationResults:
             'original_error': original_error,
             'fix_applied': fix_applied,
         })
+
+
+# ---------------------------------------------------------------- header scan
+
+_CONTIG_ID = re.compile(rb'^##contig=<[^>]*?\bID=([^,>]+)')
+# Stop after this many data records: enough to see which contigs the records
+# are on, and the header has already been read in full by then.
+_WANT_DATA_LINES = 20
+# A file with no column header inside this many bytes is not a VCF.
+_MAX_SCAN_BYTES = 8 * 1024 * 1024
+
+
+def scan_vcf_header(path: str) -> VCFHeaderScan:
+    '''
+    Read the header and the first few records of one VCF.
+
+    Binary, so the result does not depend on the process locale.  Every vSNP3
+    module forces LC_ALL=C, under which Python's default text encoding is ASCII,
+    and a text-mode open() then raised UnicodeDecodeError on the first byte of
+    an accented letter or an en dash in a ##reference path.  That is how a
+    perfectly good VCF came to be reported as "corrupted" and then rewritten
+    in place to remove the offending characters.  Here a non-ASCII byte is
+    noted and nothing else.
+    '''
+    scan = VCFHeaderScan(path=path)
+    try:
+        st = os.stat(path)
+    except OSError as e:
+        scan.error = f'{type(e).__name__}: {e}'
+        return scan
+    scan.size = st.st_size
+    if scan.size == 0:
+        scan.scanned_to_end = True
+        return scan
+
+    opener = gzip.open if path.endswith('.gz') else open
+    contigs: List[str] = []
+    chroms: List[str] = []
+    bytes_read = 0
+    try:
+        with opener(path, 'rb') as f:
+            for raw in f:
+                bytes_read += len(raw)
+                if not raw.isascii():
+                    scan.non_ascii = True
+                line = raw.rstrip(b'\r\n')
+                if not line:
+                    continue
+                if line.startswith(b'##'):
+                    if line.startswith(b'##fileformat=VCF'):
+                        scan.fileformat = True
+                    elif line.startswith(b'##contig='):
+                        m = _CONTIG_ID.match(line)
+                        if m:
+                            contigs.append(m.group(1).decode('ascii', 'replace'))
+                    if bytes_read > _MAX_SCAN_BYTES:
+                        break
+                    continue
+                if line.startswith(b'#'):
+                    if line.startswith(b'#CHROM'):
+                        scan.column_header = True
+                        scan.columns = line.count(b'\t') + 1
+                    continue
+                if not scan.column_header:
+                    scan.data_before_header = True
+                    break
+                scan.data_lines += 1
+                parts = line.split(b'\t')
+                if len(parts) < 8:
+                    scan.short_lines += 1
+                else:
+                    chrom = parts[0].decode('ascii', 'replace')
+                    if chrom not in chroms:
+                        chroms.append(chrom)
+                if scan.data_lines >= _WANT_DATA_LINES or bytes_read > _MAX_SCAN_BYTES:
+                    break
+            else:
+                scan.scanned_to_end = True
+    except (OSError, EOFError) as e:
+        scan.error = f'{type(e).__name__}: {e}'
+    # The scan above reads only the start of the file, so a file cut off part-way
+    # (an interrupted copy, a full disk) looked complete and was analysed with its
+    # remaining records missing -- every SNP after the cut read as the reference.
+    # Every VCF writer ends the last record with a newline; a file that does not
+    # end with one stopped in the middle of a record.  One read of the last byte.
+    # A cut that falls exactly on a line boundary cannot be seen this way.
+    if not scan.error and not path.endswith('.gz') and scan.column_header:
+        try:
+            with open(path, 'rb') as f:
+                f.seek(-1, os.SEEK_END)
+                scan.truncated = f.read(1) != b'\n'
+        except OSError as e:
+            scan.error = f'{type(e).__name__}: {e}'
+    scan.contigs = tuple(contigs)
+    scan.data_chroms = tuple(chroms)
+    return scan
+
+
+def classify_scan(scan: VCFHeaderScan) -> Tuple[str, str]:
+    '''
+    (category, message) for one scan.  Category is one of
+    'valid', 'empty', 'unreadable', 'permission', 'corrupted'.
+    '''
+    if scan.error:
+        if 'Permission' in scan.error:
+            return 'permission', f'VCF is not readable: {scan.error}'
+        return 'unreadable', f'VCF could not be read: {scan.error}'
+    if scan.size == 0:
+        return 'empty', 'file is 0 bytes'
+    if scan.data_before_header:
+        return 'corrupted', 'not a VCF: a non-header line appears before the #CHROM column header'
+    if not scan.column_header:
+        if scan.scanned_to_end:
+            return 'corrupted', 'not a VCF: no #CHROM column header line in the file'
+        return 'corrupted', (f'not a VCF: no #CHROM column header line in the first '
+                             f'{_MAX_SCAN_BYTES // (1024 * 1024)} MB')
+    if scan.columns < 8:
+        return 'corrupted', (f'#CHROM line has {scan.columns} column(s); a VCF needs '
+                             f'at least the 8 fixed columns')
+    if scan.short_lines:
+        return 'corrupted', (f'{scan.short_lines} of the first {scan.data_lines} data '
+                             f'record(s) have fewer than 8 tab-separated columns')
+    if scan.truncated:
+        return 'corrupted', ('truncated: the file ends part-way through a record (no final '
+                             'newline), so records after the cut are missing; copy the file '
+                             'again from its source')
+    return 'valid', 'VCF format validation passed'
 
 
 class InputValidator:
@@ -180,7 +371,9 @@ class InputValidator:
             opener = gzip.open if file_path.endswith('.gz') else open
             mode = 'rt' if file_path.endswith('.gz') else 'r'
 
-            with opener(file_path, mode) as f:
+            # Explicit encoding: under LC_ALL=C the default is ASCII on Linux,
+            # and a non-ASCII byte in a read name raised UnicodeDecodeError.
+            with opener(file_path, mode, encoding='utf-8', errors='replace') as f:
                 # Read first 4 lines to validate FASTQ format
                 lines = []
                 for i, line in enumerate(f):
@@ -219,7 +412,7 @@ class InputValidator:
             return False, msg
 
         try:
-            with open(file_path, 'r') as f:
+            with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
                 first_line = f.readline().strip()
 
                 if not first_line.startswith('>'):
@@ -253,100 +446,29 @@ class InputValidator:
 
         return True, "FASTA format validation passed"
 
-    def extract_vcf_reference(self, vcf_path: str) -> Tuple[Optional[str], List[str]]:
-        """Extract reference information from VCF file"""
-        references = set()
-        errors = []
-
-        try:
-            opener = gzip.open if vcf_path.endswith('.gz') else open
-            mode = 'rt' if vcf_path.endswith('.gz') else 'r'
-
-            with opener(vcf_path, mode) as f:
-                header_found = False
-                data_lines = 0
-
-                for line_num, line in enumerate(f, 1):
-                    line = line.strip()
-
-                    if not line:
-                        continue
-
-                    # Check VCF header
-                    if line.startswith('##fileformat=VCF'):
-                        header_found = True
-                        continue
-
-                    # Skip other header lines
-                    if line.startswith('##'):
-                        continue
-
-                    # Column headers
-                    if line.startswith('#CHROM'):
-                        continue
-
-                    # Data lines - extract chromosome/reference
-                    if not line.startswith('#'):
-                        data_lines += 1
-                        parts = line.split('\t')
-
-                        if len(parts) < 8:
-                            errors.append(f"Invalid VCF format on line {line_num}: insufficient columns")
-                            continue
-
-                        chrom = parts[0]
-                        references.add(chrom)
-
-                        # Only check first few data lines for efficiency
-                        if data_lines > 5:
-                            break
-
-                if not header_found:
-                    errors.append("Missing VCF header (##fileformat=VCF)")
-
-                if data_lines == 0:
-                    errors.append("VCF file contains no data lines")
-
-        except Exception as e:
-            errors.append(f"Failed to read VCF file: {str(e)}")
-
-        # Return primary reference (most common)
-        if references:
-            primary_ref = sorted(references)[0]  # Use first alphabetically for consistency
-            return primary_ref, errors
-
-        return None, errors
+    # ------------------------------------------------------------------- VCF
 
     def validate_vcf_format(self, vcf_path: str) -> Tuple[bool, str, Optional[str]]:
-        """Comprehensive VCF file validation"""
-        # Basic file validation
-        is_valid, msg = self.validate_file_exists(vcf_path, "VCF")
-        if not is_valid:
-            return False, msg, None
+        """
+        (is_valid, message, reference label) for one VCF.
 
-        # Extract reference and validate format
-        reference, errors = self.extract_vcf_reference(vcf_path)
-
-        if errors:
-            error_msg = f"VCF validation errors in {os.path.basename(vcf_path)}: {'; '.join(errors)}"
-            return False, error_msg, reference
-
-        if reference is None:
-            return False, f"No reference found in VCF file: {vcf_path}", None
-
-        return True, "VCF format validation passed", reference
+        A header-only file is valid: it is a sample with nothing to report,
+        not a broken one.
+        """
+        scan = scan_vcf_header(vcf_path)
+        category, message = classify_scan(scan)
+        if category != 'valid':
+            return False, f"VCF validation error in {os.path.basename(vcf_path)}: {message}", scan.reference_label
+        return True, message, scan.reference_label
 
     def _is_same_reference_genome(self, ref1: str, ref2: str, min_similarity: float = 0.7) -> bool:
         """
         Check if two reference chromosome names belong to the same reference genome.
 
-        Handles multi-segment/multi-chromosome references (e.g., influenza segments,
-        two-chromosome bacteria) where different chromosomes share a common base name
-        but have chromosome-specific suffixes.
-
-        Uses longest common prefix similarity: if two reference names share at least
-        min_similarity of the shorter name as a common prefix, they are considered
-        the same reference genome.
+        Only used when no file carries ##contig header lines, so the reference
+        has to be inferred from record CHROM names.  Handles multi-segment
+        references (influenza segments, two-chromosome bacteria) whose contig
+        names share a long common prefix.
 
         Examples:
             A/owl/CA/25-003495-001/2024_PB2 vs A/owl/CA/25-003495-001/2024_PB1 -> True (94%)
@@ -364,108 +486,53 @@ class InputValidator:
 
         return (len(common) / min_len) >= min_similarity
 
-    def _analyze_reference_consensus(self, vcf_list: List[str], sample_size: int = 50) -> Tuple[Set[str], Dict[str, int]]:
-        """
-        Analyze a sample of VCF files to determine consensus reference pattern
+    @staticmethod
+    def _dominant_reference(scans: List[VCFHeaderScan]) -> Tuple[frozenset, int, str]:
+        '''
+        The reference most of the files were called against.
 
-        Returns:
-        - Set of expected/acceptable references
-        - Dictionary with reference counts for analysis
-        """
-        if not vcf_list:
-            return set(), {}
+        Decided from every readable file, not a random sample of 50: the old
+        sample made the set of "expected" references, and therefore which files
+        were flagged, differ from one run to the next on the same input.
 
-        # Sample a subset for analysis to avoid processing huge datasets
-        import random
-        sample_files = random.sample(vcf_list, min(sample_size, len(vcf_list)))
+        Identified by the ##contig ID set, which names every sequence of the
+        reference FASTA whether or not the sample has a record on it.  The
+        record CHROM names are the fallback for VCFs written without ##contig
+        lines, where a sample with calls on one segment only looks as if it
+        used a one-segment reference.
+        '''
+        by_contigs = Counter(frozenset(s.contigs) for s in scans if s.contigs)
+        if by_contigs:
+            dominant = max(by_contigs, key=lambda k: (by_contigs[k], tuple(sorted(k))))
+            return dominant, by_contigs[dominant], 'contig'
+        by_first = Counter(s.data_chroms[0] for s in scans if s.data_chroms)
+        if by_first:
+            dominant = max(by_first, key=lambda k: (by_first[k], k))
+            return frozenset([dominant]), by_first[dominant], 'record'
+        return frozenset(), 0, ''
 
-        reference_counts = defaultdict(int)
-
-        self.log_validation(f"Analyzing reference consensus from {len(sample_files)} sample files...", "INFO")
-
-        for vcf_file in sample_files:
-            # Quick reference extraction
-            reference, errors = self.extract_vcf_reference(vcf_file)
-            if reference and not errors:
-                reference_counts[reference] += 1
-
-        if not reference_counts:
-            self.log_validation("No valid references found in sample", "WARNING")
-            return set(), {}
-
-        # Calculate statistics
-        total_samples = len(sample_files)
-        dominant_ref = max(reference_counts.keys(), key=lambda x: reference_counts[x])
-        dominant_percentage = (reference_counts[dominant_ref] / total_samples) * 100
-
-        self.log_validation(f"Reference analysis: {len(reference_counts)} unique references found", "INFO")
-        self.log_validation(f"Most common: {dominant_ref} ({reference_counts[dominant_ref]}/{total_samples} = {dominant_percentage:.1f}%)", "INFO")
-
-        # Determine acceptable references based on consensus
-        expected_references = set()
-
-        # If one reference dominates (>70%), expect primarily that reference
-        if dominant_percentage > 70:
-            expected_references.add(dominant_ref)
-            self.log_validation(f"Single dominant reference detected: {dominant_ref}", "INFO")
-
-            # Also accept references that appear in at least 5% of samples (could be legitimate segments/variants)
-            for ref, count in reference_counts.items():
-                percentage = (count / total_samples) * 100
-                if percentage >= 5.0:
-                    expected_references.add(ref)
-                    if ref != dominant_ref:
-                        self.log_validation(f"Accepting secondary reference: {ref} ({percentage:.1f}%)", "INFO")
-
-        # If references are more evenly distributed, accept the top ones
-        else:
-            # Accept references that appear in at least 10% of samples
-            for ref, count in reference_counts.items():
-                percentage = (count / total_samples) * 100
-                if percentage >= 10.0:
-                    expected_references.add(ref)
-                    self.log_validation(f"Accepting reference: {ref} ({percentage:.1f}%)", "INFO")
-
-        return expected_references, dict(reference_counts)
-
-    def _attempt_encoding_fix(self, vcf_path: str) -> Tuple[bool, str]:
-        """
-        Attempt to fix encoding issues in a VCF file by removing non-ASCII characters.
-
-        Reads the file with latin-1 encoding (which tolerates all byte values 0x00-0xFF),
-        strips non-ASCII characters from every line, and writes the cleaned content back
-        to the original file in-place.
-
-        Returns:
-            Tuple of (success: bool, message: str)
-        """
-        try:
-            with open(vcf_path, 'r', encoding='latin-1') as f:
-                content = f.read()
-
-            # Count non-ASCII characters before cleaning
-            non_ascii_count = sum(1 for c in content if ord(c) >= 128)
-            if non_ascii_count == 0:
-                return False, "No non-ASCII characters found to remove"
-
-            # Strip non-ASCII chars from every line (preserving line endings)
-            cleaned_lines = []
-            for line in content.splitlines(keepends=True):
-                cleaned_line = line.encode('ascii', errors='ignore').decode('ascii')
-                cleaned_lines.append(cleaned_line)
-
-            cleaned_content = ''.join(cleaned_lines)
-
-            with open(vcf_path, 'w', encoding='ascii') as f:
-                f.write(cleaned_content)
-
-            return True, f"Removed {non_ascii_count} non-ASCII character(s) from VCF file"
-
-        except Exception as e:
-            return False, f"Encoding fix failed: {str(e)}"
+    def _compatible(self, scan: VCFHeaderScan, dominant: frozenset, basis: str) -> bool:
+        if not dominant:
+            return True
+        if scan.contigs:
+            # Shares at least one sequence ID: positions on shared contigs align.
+            return bool(set(scan.contigs) & dominant)
+        if scan.data_chroms:
+            if basis == 'contig':
+                return set(scan.data_chroms) <= dominant
+            anchor = next(iter(dominant))
+            return all(self._is_same_reference_genome(c, anchor) for c in scan.data_chroms)
+        return True                     # header only: nothing to contradict
 
     def validate_vcf_list(self, vcf_list: List[str]) -> VCFValidationResults:
-        """Validate list of VCF files comprehensively with consensus-based reference checking"""
+        """
+        Validate a list of VCF files and check that they share a reference.
+
+        One short header read per file, run in a thread pool because the work
+        is entirely I/O.  Results are assembled in input order so the outcome
+        and the log are identical from run to run.
+        """
+        started = time.monotonic()
         results = VCFValidationResults()
         results.total_files = len(vcf_list)
 
@@ -475,203 +542,147 @@ class InputValidator:
 
         self.log_validation(f"Validating {len(vcf_list)} VCF files...")
 
-        # Step 1: Analyze reference consensus from a sample of files
-        expected_references, consensus_analysis = self._analyze_reference_consensus(vcf_list)
+        workers = max(1, min(32, len(vcf_list)))
+        with futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            scans = dict(zip(vcf_list, pool.map(scan_vcf_header, vcf_list)))
 
-        # Track references found during full validation
-        reference_counts = defaultdict(list)
-
+        valid_scans: List[VCFHeaderScan] = []
         for vcf_file in vcf_list:
-            # Validate file access (no individual logging)
-            is_accessible, access_msg = self.validate_file_exists(vcf_file, "VCF")
-            if not is_accessible:
-                if "does not exist" in access_msg:
-                    results.add_error(vcf_file, "unreadable", access_msg, "critical")
-                    self.log_validation(f"Unreadable file: {os.path.basename(vcf_file)}", "WARNING")
-                elif "not readable" in access_msg:
-                    results.add_error(vcf_file, "permission", access_msg, "critical")
-                    self.log_validation(f"Permission error: {os.path.basename(vcf_file)}", "WARNING")
-                elif "empty" in access_msg:
-                    results.add_error(vcf_file, "empty", access_msg, "warning")
-                    self.log_validation(f"Empty file: {os.path.basename(vcf_file)}", "WARNING")
+            scan = scans[vcf_file]
+            category, message = classify_scan(scan)
+            base = os.path.basename(vcf_file)
+            if category == 'valid':
+                results.valid_files.append(vcf_file)
+                valid_scans.append(scan)
+                if scan.data_lines == 0:
+                    results.header_only_files.append(vcf_file)
+                    self.log_validation(f"Header only (no records; reference-identical where covered): {base}", "INFO")
+                if scan.non_ascii:
+                    results.non_ascii_files.append(vcf_file)
+                    self.log_validation(f"Non-ASCII bytes in header, ignored on read: {base}", "INFO")
+                if scan.columns > 10:
+                    results.multi_sample_files[vcf_file] = scan.columns - 9
+                if not scan.fileformat:
+                    self.log_validation(f"No ##fileformat line (accepted): {base}", "INFO")
                 continue
+            severity = 'warning' if category == 'empty' else 'critical'
+            results.add_error(vcf_file, category, message, severity)
+            self.log_validation(f"{category.capitalize()}: {base} - {message}",
+                                "WARNING" if category == 'empty' else "ERROR")
 
-            # Validate VCF format and extract reference (no individual logging)
-            is_valid_vcf, vcf_msg, reference = self.validate_vcf_format(vcf_file)
-            if not is_valid_vcf:
-                if "no data lines" in vcf_msg.lower() or "empty" in vcf_msg.lower():
-                    results.add_error(vcf_file, "empty", vcf_msg, "warning")
-                    self.log_validation(f"Empty VCF: {os.path.basename(vcf_file)}", "WARNING")
-                    continue
-                elif "codec can't decode" in vcf_msg or "ordinal not in range" in vcf_msg:
-                    # Encoding error — attempt in-place fix
-                    original_error_msg = vcf_msg
-                    fix_success, fix_msg = self._attempt_encoding_fix(vcf_file)
-                    if fix_success:
-                        # Re-validate the now-cleaned file
-                        is_valid_vcf, vcf_msg, reference = self.validate_vcf_format(vcf_file)
-                        if is_valid_vcf:
-                            results.add_fixed_file(vcf_file, original_error_msg, fix_msg)
-                            self.log_validation(
-                                f"Auto-fixed encoding: {os.path.basename(vcf_file)} - {fix_msg}", "INFO"
-                            )
-                            # Fall through to reference tracking and valid_files append below
-                        else:
-                            results.add_error(vcf_file, "corrupted", vcf_msg, "critical")
-                            self.log_validation(
-                                f"Corrupted VCF (fix attempted, still invalid): {os.path.basename(vcf_file)} - {vcf_msg}", "ERROR"
-                            )
-                            continue
-                    else:
-                        results.add_error(vcf_file, "corrupted", original_error_msg, "critical")
-                        self.log_validation(
-                            f"Corrupted VCF: {os.path.basename(vcf_file)} - {original_error_msg}", "ERROR"
-                        )
-                        continue
-                else:
-                    results.add_error(vcf_file, "corrupted", vcf_msg, "critical")
-                    self.log_validation(f"Corrupted VCF: {os.path.basename(vcf_file)} - {vcf_msg}", "ERROR")
-                    continue
+        # Reference consistency, decided from all readable files.
+        dominant, dominant_count, basis = self._dominant_reference(valid_scans)
+        results.reference_contigs = tuple(sorted(dominant))
+        results.reference_file_count = dominant_count
+        results.reference_basis = basis
+        if dominant:
+            shown = ', '.join(results.reference_contigs[:4])
+            if len(results.reference_contigs) > 4:
+                shown += f', ... ({len(results.reference_contigs)} contigs)'
+            self.log_validation(
+                f"Reference: {shown} -- shared by {dominant_count} of {len(valid_scans)} "
+                f"readable files (from {'##contig header lines' if basis == 'contig' else 'record CHROM names'})", "INFO")
+            mismatched = [s for s in valid_scans if not self._compatible(s, dominant, basis)]
+            readable = len(valid_scans)
+            for scan in mismatched:
+                found = ', '.join((scan.contigs or scan.data_chroms)[:4])
+                message = (f"called against a different reference: file has "
+                           f"{found}; {dominant_count} of {readable} files have {shown}")
+                results.add_error(scan.path, "reference_mismatch", message, "critical")
+                self.log_validation(f"Reference mismatch: {os.path.basename(scan.path)} uses {found}", "ERROR")
+                results.valid_files.remove(scan.path)
+            # The files kept must be a strict majority.  `dominant_count * 2 <
+            # readable` let an even split through: three B. suis and three
+            # M. bovis files kept whichever half's contig names sort higher and
+            # excluded the other half, rather than aborting as a mixed set.
+            kept = readable - len(mismatched)
+            if mismatched and kept * 2 <= readable:
+                results.reference_majority_lost = True
+                results.notes.append(
+                    f'Only {kept} of {readable} readable files are on the most common '
+                    f'reference ({shown}), which is not a majority.')
 
-            # Track reference usage
-            if reference:
-                reference_counts[reference].append(vcf_file)
-
-            # File passed all validations (including auto-fixed files)
-            results.valid_files.append(vcf_file)
-
-        # Step 2: Check reference consistency using consensus analysis
-        if expected_references and len(reference_counts) > 0:
-            # Determine the dominant reference from ALL validated files (more reliable than sample)
-            dominant_ref_all = max(reference_counts.keys(), key=lambda x: len(reference_counts[x]))
-
-            # Find files whose reference is incompatible with the dominant reference.
-            # A reference is accepted if it is either:
-            #   1. An exact match to a sample-derived expected reference, OR
-            #   2. A segment/chromosome of the same reference genome as the dominant
-            #      (detected via long common prefix - handles multi-FASTA references
-            #      like influenza where samples may only have SNPs on one segment)
-            mismatched_files = []
-
-            for ref, files in reference_counts.items():
-                if ref not in expected_references and not self._is_same_reference_genome(ref, dominant_ref_all):
-                    mismatched_files.extend(files)
-
-            # Only report mismatches if they represent a small minority
-            # This prevents legitimate multi-reference datasets from being flagged
-            total_valid_files = len(results.valid_files)
-            mismatch_percentage = (len(mismatched_files) / total_valid_files * 100) if total_valid_files > 0 else 0
-
-            if mismatched_files and mismatch_percentage < 30:  # Only flag if <30% of files are "mismatched"
-                self.log_validation(f"Reference mismatch detected - {len(mismatched_files)} files use unexpected references", "ERROR")
-
-                # Determine the most common expected reference for error reporting
-                if consensus_analysis:
-                    most_common_expected = max(consensus_analysis.keys(), key=lambda x: consensus_analysis[x])
-                else:
-                    most_common_expected = list(expected_references)[0] if expected_references else "unknown"
-
-                for vcf_file in mismatched_files:
-                    # Find what reference this file actually uses
-                    file_reference = None
-                    for ref, files in reference_counts.items():
-                        if vcf_file in files:
-                            file_reference = ref
-                            break
-
-                    if file_reference:
-                        mismatch_msg = f"Expected reference: {most_common_expected}, Found: {file_reference}"
-                        results.add_error(vcf_file, "reference_mismatch", mismatch_msg, "critical")
-                        self.log_validation(f"Reference mismatch: {os.path.basename(vcf_file)} uses {file_reference}", "ERROR")
-                        # Remove from valid files
-                        if vcf_file in results.valid_files:
-                            results.valid_files.remove(vcf_file)
-
-            elif mismatch_percentage >= 30:
-                self.log_validation(f"Multiple references detected ({len(reference_counts)} unique), but distribution suggests legitimate multi-reference dataset", "INFO")
-                for ref, files in reference_counts.items():
-                    percentage = (len(files) / total_valid_files * 100)
-                    self.log_validation(f"Reference {ref}: {len(files)} files ({percentage:.1f}%)", "INFO")
-
-        self.log_validation(f"Validation complete: {results.total_valid}/{results.total_files} files valid")
+        results.seconds = time.monotonic() - started
+        self.log_validation(f"Validation complete: {results.total_valid}/{results.total_files} "
+                            f"files valid in {results.seconds:.1f} s")
         return results
 
     def print_vcf_validation_summary(self, results: VCFValidationResults):
-        """Print comprehensive VCF validation results to terminal"""
+        """Print VCF validation results to terminal"""
         print("\n" + "="*80)
         print("📊 VCF FILE VALIDATION SUMMARY")
         print("="*80)
-        clean_count = results.total_valid - len(results.fixed_files)
         print(f"Total files processed: {results.total_files}")
         print(f"Valid files: {results.total_valid}")
-        if results.fixed_files:
-            print(f"  - Clean (no issues): {clean_count}")
-            print(f"  - Auto-fixed (encoding corrected): {len(results.fixed_files)}")
+        if results.header_only_files:
+            print(f"  - with no records (reference-identical where covered): {len(results.header_only_files)}")
+        if results.non_ascii_files:
+            print(f"  - with non-ASCII bytes in the header, ignored on read: {len(results.non_ascii_files)}")
         print(f"Invalid files: {results.total_invalid}")
-
-        if results.total_invalid == 0 and not results.fixed_files:
-            print("✅ All VCF files passed validation!")
-            return
-
-        # Show auto-fixed files
-        if results.fixed_files:
-            print(f"\n🔧 AUTO-FIXED: Encoding Issues ({len(results.fixed_files)} files) - included in analysis")
-            print("-" * 50)
-            for entry in results.fixed_files:
-                print(f"  🔧 {os.path.basename(entry['file'])}")
-                print(f"     Fix: {entry['fix_applied']}")
+        if results.reference_contigs:
+            shown = ', '.join(results.reference_contigs[:4])
+            if len(results.reference_contigs) > 4:
+                shown += f', ... ({len(results.reference_contigs)} contigs)'
+            print(f"Reference: {shown}")
+        print(f"Validation time: {results.seconds:.1f} s")
 
         if results.total_invalid == 0:
+            print("✅ All VCF files passed validation!")
             print("="*80)
             return
 
-        # Show remaining validation issues
         if results.reference_mismatches:
-            print(f"\n🔥 CRITICAL: Reference Mismatch ({len(results.reference_mismatches)} files)")
+            print(f"\n🔥 EXCLUDED: Reference Mismatch ({len(results.reference_mismatches)} files)")
             print("-" * 50)
             for mismatch in results.reference_mismatches:
                 print(f"  ❌ {os.path.basename(mismatch['file'])}")
                 print(f"     {mismatch['message']}")
 
         if results.corrupted_files:
-            print(f"\n💥 CRITICAL: Corrupted Files ({len(results.corrupted_files)} files)")
+            print(f"\n💥 EXCLUDED: Corrupted Files ({len(results.corrupted_files)} files)")
             print("-" * 50)
             for file_path in results.corrupted_files:
-                print(f"  ❌ {os.path.basename(file_path)}")
+                print(f"  ❌ {os.path.basename(file_path)}: {results.reason(file_path)}")
 
         if results.empty_files:
-            print(f"\n⚠️  WARNING: Empty Files ({len(results.empty_files)} files)")
+            print(f"\n⚠️  EXCLUDED: Empty Files ({len(results.empty_files)} files)")
             print("-" * 50)
             for file_path in results.empty_files:
-                print(f"  ⚠️  {os.path.basename(file_path)}")
+                print(f"  ⚠️  {os.path.basename(file_path)}: {results.reason(file_path)}")
 
         if results.permission_errors:
-            print(f"\n🔒 ERROR: Permission Issues ({len(results.permission_errors)} files)")
+            print(f"\n🔒 EXCLUDED: Permission Issues ({len(results.permission_errors)} files)")
             print("-" * 50)
             for file_path in results.permission_errors:
-                print(f"  🔒 {os.path.basename(file_path)}")
+                print(f"  🔒 {os.path.basename(file_path)}: {results.reason(file_path)}")
 
         if results.unreadable_files:
-            print(f"\n❓ ERROR: Unreadable Files ({len(results.unreadable_files)} files)")
+            print(f"\n❓ EXCLUDED: Unreadable Files ({len(results.unreadable_files)} files)")
             print("-" * 50)
             for file_path in results.unreadable_files:
-                print(f"  ❓ {os.path.basename(file_path)}")
+                print(f"  ❓ {os.path.basename(file_path)}: {results.reason(file_path)}")
 
+        for note in results.notes:
+            print(f"\n### {note}")
         print("="*80)
 
     def write_validation_log(self, log_file: str, results: VCFValidationResults):
         """Write detailed validation log to file"""
         try:
-            with open(log_file, 'w') as f:
+            with open(log_file, 'w', encoding='utf-8') as f:
                 f.write("VCF VALIDATION LOG\n")
                 f.write("==================\n\n")
-                clean_count = results.total_valid - len(results.fixed_files)
                 f.write(f"Total files processed: {results.total_files}\n")
                 f.write(f"Valid files: {results.total_valid}\n")
-                if results.fixed_files:
-                    f.write(f"  - Clean (no issues): {clean_count}\n")
-                    f.write(f"  - Auto-fixed (encoding corrected): {len(results.fixed_files)}\n")
-                f.write(f"Invalid files: {results.total_invalid}\n\n")
+                if results.header_only_files:
+                    f.write(f"  - with no records: {len(results.header_only_files)}\n")
+                if results.non_ascii_files:
+                    f.write(f"  - with non-ASCII bytes in the header: {len(results.non_ascii_files)}\n")
+                f.write(f"Invalid files: {results.total_invalid}\n")
+                if results.reference_contigs:
+                    f.write(f"Reference contigs: {', '.join(results.reference_contigs)}\n")
+                    f.write(f"  shared by {results.reference_file_count} readable file(s)\n")
+                f.write(f"Validation time: {results.seconds:.1f} s\n\n")
 
                 # Write validation messages
                 f.write("VALIDATION MESSAGES:\n")
@@ -680,20 +691,9 @@ class InputValidator:
                     f.write(f"{log_msg}\n")
                 f.write("\n")
 
-                # Write auto-fixed files section
-                if results.fixed_files:
-                    f.write(f"AUTO-FIXED FILES ({len(results.fixed_files)}) - included in analysis:\n")
-                    f.write("-" * 40 + "\n")
-                    for entry in results.fixed_files:
-                        f.write(f"File: {entry['file']}\n")
-                        f.write(f"Fix applied: {entry['fix_applied']}\n")
-                        f.write(f"Original error: {entry['original_error']}\n")
-                        f.write("-" * 40 + "\n")
-                    f.write("\n")
-
                 # Write detailed error information
                 if results.errors:
-                    f.write("DETAILED ERRORS:\n")
+                    f.write("EXCLUDED FILES:\n")
                     f.write("-" * 40 + "\n")
                     for error in results.errors:
                         f.write(f"File: {error.file_path}\n")
@@ -702,14 +702,24 @@ class InputValidator:
                         f.write(f"Message: {error.error_message}\n")
                         f.write("-" * 40 + "\n")
 
+                if results.non_ascii_files:
+                    f.write(f"\nNON-ASCII BYTES IN HEADER ({len(results.non_ascii_files)}), ignored on read, file unchanged:\n")
+                    f.write("-" * 40 + "\n")
+                    for vcf_file in results.non_ascii_files:
+                        f.write(f"{vcf_file}\n")
+
+                if results.header_only_files:
+                    f.write(f"\nHEADER-ONLY FILES ({len(results.header_only_files)}), analysed as reference-identical:\n")
+                    f.write("-" * 40 + "\n")
+                    for vcf_file in results.header_only_files:
+                        f.write(f"{vcf_file}\n")
+
                 # Write valid files list
                 if results.valid_files:
-                    fixed_paths = {e['file'] for e in results.fixed_files}
                     f.write(f"\nVALID FILES ({len(results.valid_files)}):\n")
                     f.write("-" * 40 + "\n")
                     for vcf_file in results.valid_files:
-                        suffix = " [auto-fixed]" if vcf_file in fixed_paths else ""
-                        f.write(f"{vcf_file}{suffix}\n")
+                        f.write(f"{vcf_file}\n")
 
         except Exception as e:
             print(f"Warning: Could not write validation log: {str(e)}")

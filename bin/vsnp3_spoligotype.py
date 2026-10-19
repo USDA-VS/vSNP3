@@ -21,12 +21,36 @@ from vsnp3_file_setup import bcolors
 from vsnp3_file_setup import Excel_Stats
 
 
+def half_cpus(cpus):
+    '''
+    Dask workers for the spacer search: half the CPUs, never fewer than one.
+
+    int(cpus / 2) is 0 when Setup leaves one CPU (a machine with three cores or
+    fewer), and LocalCluster(n_workers=0) is legal: client.gather() then waits
+    for a worker that never comes, so the sequential fallback was never reached
+    and the spoligotype step hung for good.
+    '''
+    return max(1, int(cpus / 2))
+
+
+def open_fastq_text(path):
+    '''
+    Text-mode handle for a FASTQ that may or may not be gzipped, decided by the
+    gzip magic bytes rather than the extension.  The validator admits a plain
+    .fastq, and gzip.open() on one raised BadGzipFile, which nothing caught.
+    '''
+    with open(path, 'rb') as probe:
+        gzipped = probe.read(2) == b'\x1f\x8b'
+    opener = gzip.open if gzipped else open
+    return opener(path, 'rt', encoding='utf-8', errors='replace')
+
+
 class Spoligo(Setup):
 
     def __init__(self, SAMPLE_NAME=None, FASTQ_R1=None, FASTQ_R2=None, debug=False):
         Setup.__init__(self, SAMPLE_NAME=SAMPLE_NAME, FASTQ_R1=FASTQ_R1, FASTQ_R2=FASTQ_R2, debug=debug)
         self.print_run_time('Spoligotype')
-        self.cpu_count_half = int(self.cpus / 2)
+        self.cpu_count_half = half_cpus(self.cpus)
         real_path = os.path.dirname(os.path.realpath(__file__))
         self.spoligo_db = real_path + "/../dependencies/spoligotype_db.txt" 
         spoligo_dictionary = {}
@@ -121,7 +145,7 @@ class Spoligo(Setup):
         try:
             for fastq in self.FASTQ_list:
                 sum_length = 0
-                with gzip.open(fastq, "rt") as in_handle:
+                with open_fastq_text(fastq) as in_handle:
                     # all 3, title and seq and qual, were needed
                     count = 0
                     for title, seq, qual in FastqGeneralIterator(in_handle):
@@ -210,7 +234,7 @@ class Spoligo(Setup):
         self.octal = self.binary_to_octal(sample_binary)
         found = False
         try:
-            with open(self.spoligo_db) as spoligo_db_file:  # put into dictionary or list
+            with open(self.spoligo_db, encoding='utf-8', errors='replace') as spoligo_db_file:  # put into dictionary or list
                 for line in spoligo_db_file:
                     line = line.rstrip()
                     line_parts = line.split()

@@ -52,5 +52,13 @@ byte-identical is the bar, including the `.bootstrap` sidecars.
 - **`compare.py`** compares SNP tables as `{(sheet, row, position) -> value}`, FASTA as
   `{sample -> sequence}`, newick as a leaf set, and bootstrap values as an ordered list.
 
+- **`bench_tree_phase.py`** times the "FASTAs, RAxML trees, tables and HTML
+  trees" phase on one synthetic group of any size, sub-step by sub-step
+  (RAxML, the table statistics, each workbook, the tree builder, the figure),
+  against any `bin/` directory, so a change to that phase can be measured on
+  hundreds of samples without a VCF set of that size.  The RAxML tree is
+  cached per data directory, so two versions of the code are timed on the same
+  tree.  Its docstring has the two commands.
+
 Requires the reference set (see the README's Quick Start for
 `vsnp3_test_dataset`) and `raxml` on `PATH`.

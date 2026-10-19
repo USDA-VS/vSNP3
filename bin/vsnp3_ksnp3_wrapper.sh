@@ -1,4 +1,13 @@
 #!/bin/bash
+#
+# Run kSNP3 on every FASTA in the working directory and draw the trees.
+#
+# kSNP3 is no longer distributed.  docs/instructions/additional_tools.md describes
+# kSNP4, whose programs are named kSNP4, MakeKSNP4infile and Kchooser4 and take
+# different arguments, so this script is kept for sites that still have kSNP3 on
+# PATH and is not a kSNP4 driver.  None of what it calls is part of the vsnp3 conda
+# package; install separately: kSNP3, MakeKSNP3infile, MakeFasta, Kchooser,
+# nw_display (newick-utils) and, for the PDF of each tree, inkscape.
 
 starttime=`date +%s`
 dir_name=${PWD##*/}
@@ -23,9 +32,26 @@ fi
 exit 1
 }
 
-# System variable "NR_CPUS" must be set for Number of Cores to use
+# Cores for kSNP3: leave five for the node, never fewer than one (the bare
+# `nproc - 5` went to 0 or negative on small machines).  nproc is GNU coreutils,
+# so fall back to getconf where it is absent.
+ncpu=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)
+NR_CPUS=$(( ncpu > 5 ? ncpu - 5 : 1 ))
 
-NR_CPUS=$(($(nproc) - 5))
+# Newick tree -> SVG -> PDF.  Inkscape 1.0 removed the 0.92 `-f in -A out`
+# options this script was written with; use whichever syntax the installed
+# version speaks, and leave the SVG behind with a note when inkscape is absent.
+svg_to_pdf() {  # svg_to_pdf <in.svg> <out.pdf>
+    if ! command -v inkscape >/dev/null 2>&1; then
+        echo "inkscape not found: $1 written, no PDF made"
+        return 0
+    fi
+    if inkscape --version 2>/dev/null | grep -q 'Inkscape 0\.'; then
+        inkscape -f "$1" -A "$2"
+    else
+        inkscape --export-type=pdf --export-filename="$2" "$1"
+    fi
+}
 
 # Set flags
 hflag=
@@ -70,21 +96,21 @@ fi
 for i in *.fa; do
      if [[ $i == *.fa ]]; then    
         echo "***.fa files found and changed to .fasta***"    
-         mv $i ${i%.fa}.fasta
+         mv "$i" "${i%.fa}.fasta"
     fi
 done
 
 for i in *.fna; do
     if [[ $i == *.fna ]]; then
         echo "***.fna files found and changed to .fasta***" 
-         mv $i ${i%.fna}.fasta
+         mv "$i" "${i%.fna}.fasta"
      fi
 done
 
 for i in *.fas; do
     if [[ $i == *.fas ]]; then
         echo "***.fas files found and changed to .fasta***" 
-         mv $i ${i%.fas}.fasta
+         mv "$i" "${i%.fas}.fasta"
      fi
 done
 
@@ -103,7 +129,7 @@ for i in *.fasta; do
     name=${i%.fasta}
     new_name=$(echo $name |  sed 's/[ :,%^&*().]/_/g' | sed 's/__/_/g' | sed 's/__/_/g')
     printf "${i}\t${new_name}.fasta\n"
-    mv ${i} ${new_name}.fasta
+    mv "${i}" "${new_name}.fasta"
 done
 
 if [ -z "$kmer" ]; then
@@ -161,9 +187,9 @@ fi
 cp ./run/tree_tipAlleleCounts.ML.tre ./${dir_name}_tipAlleleCounts-ML.tre
 cp ./run/tree_tipAlleleCounts.majority*.tre ./${dir_name}_tipAlleleCounts-majority-${majority}.tre
 
-cat ${dir_name}_tipAlleleCounts-ML.tre | nw_display -s -w 1000 -v 20 -b 'opacity:0' -i 'font-size:8' -l 'font-family:serif;font-style:italic' -d 'stroke-width:2;stroke:blue' - > ${dir_name}-ML.svg && inkscape -f ${dir_name}-ML.svg -A ${dir_name}-ML.pdf
+cat ${dir_name}_tipAlleleCounts-ML.tre | nw_display -s -w 1000 -v 20 -b 'opacity:0' -i 'font-size:8' -l 'font-family:serif;font-style:italic' -d 'stroke-width:2;stroke:blue' - > ${dir_name}-ML.svg && svg_to_pdf ${dir_name}-ML.svg ${dir_name}-ML.pdf
 
-cat ${dir_name}_tipAlleleCounts-majority-${majority}.tre | nw_display -s -w 1000 -v 20 -b 'opacity:0' -i 'font-size:8' -l 'font-family:serif;font-style:italic' -d 'stroke-width:2;stroke:blue' - > ${dir_name}-majority-${majority}.svg && inkscape -f ${dir_name}-majority-${majority}.svg -A ${dir_name}-majority-${majority}.pdf
+cat ${dir_name}_tipAlleleCounts-majority-${majority}.tre | nw_display -s -w 1000 -v 20 -b 'opacity:0' -i 'font-size:8' -l 'font-family:serif;font-style:italic' -d 'stroke-width:2;stroke:blue' - > ${dir_name}-majority-${majority}.svg && svg_to_pdf ${dir_name}-majority-${majority}.svg ${dir_name}-majority-${majority}.pdf
 
 echo "" > mytempfile
 echo "" >> mytempfile

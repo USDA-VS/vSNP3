@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 from vsnp3_version import __version__
+from vsnp3_version import CONSENSUS_QUAL_THRESHOLD, MQ_THRESHOLD
 
 import os
 import re
@@ -44,7 +45,7 @@ class Merge_VCF(Setup):
     Merges VCF file SNPs into a FASTA reference sequence
     """
 
-    def __init__(self, vcf=None, fasta=None, qual_threshold=300, mq_threshold=56, ac_threshold=1, indels=False):
+    def __init__(self, vcf=None, fasta=None, qual_threshold=CONSENSUS_QUAL_THRESHOLD, mq_threshold=MQ_THRESHOLD, ac_threshold=1, indels=False):
         """
         Initialize the Merge_VCF class
         
@@ -84,7 +85,9 @@ class Merge_VCF(Setup):
         # Generate safe names using string formatting instead of f-strings
         self.fasta_name = re.sub(r'[.].*', '', os.path.basename(self.fasta))
         vcf_basename = re.sub(r'[.].*', '', os.path.basename(self.vcf))
-        self.vcf_name = vcf_basename.rstrip('_zc')
+        # re.sub, not rstrip: rstrip('_zc') strips any trailing '_', 'z' or
+        # 'c' characters, so 'SRR123c' became 'SRR123'.
+        self.vcf_name = re.sub(r'_zc$', '', vcf_basename)
         self.output_name = "{}_vcf_merged_{}".format(self.vcf_name, self.fasta_name)
 
     @contextmanager
@@ -263,10 +266,17 @@ class Merge_VCF(Setup):
                 
                 print("Reading reference sequence...")
                 # Read reference sequence
-                try:
-                    sequence = SeqIO.read(self.fasta, "fasta")
-                except Exception as e:
-                    raise RuntimeError("Failed to read FASTA file: {}".format(str(e)))
+                records = list(SeqIO.parse(self.fasta, "fasta"))
+                if len(records) != 1:
+                    # The merge is keyed on POS alone, so a multi-contig
+                    # reference would place every contig's variants on the
+                    # first contig.  Said plainly rather than through
+                    # SeqIO.read's "More than one record found".
+                    raise RuntimeError(
+                        f'{os.path.basename(self.fasta)} holds {len(records)} records; this '
+                        f'tool merges into a single-contig reference. Split the FASTA and '
+                        f'the VCF by contig and run once per contig.')
+                sequence = records[0]
                 
                 print("Processing {} variants...".format(len(df)))
                 
@@ -344,19 +354,19 @@ def main():
         '-x', '--qual_threshold', 
         action='store', 
         dest='qual_threshold', 
-        default=300, 
+        default=CONSENSUS_QUAL_THRESHOLD, 
         type=int,
         required=False, 
-        help='Optional: Minimum QUAL threshold for using a SNP (default: 300)'
+        help=f'Optional: Minimum QUAL threshold for using a SNP (default: {CONSENSUS_QUAL_THRESHOLD})'
     )
     parser.add_argument(
         '-y', '--mq_threshold', 
         action='store', 
         dest='mq_threshold', 
-        default=56, 
+        default=MQ_THRESHOLD, 
         type=int,
         required=False, 
-        help='Optional: Minimum MQ threshold for using a SNP (default: 56)'
+        help=f'Optional: Minimum MQ threshold for using a SNP (default: {MQ_THRESHOLD})'
     )
     parser.add_argument(
         '-z', '--ac', 

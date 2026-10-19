@@ -26,10 +26,16 @@ NO_CLI = {'vsnp3_run.py',
           'vsnp3_file_setup.py', 'vsnp3_input_validator.py', 'krona_lca_all.py',
           'defining_snps_print.py'}
 
-# Third-party imports that may legitimately be absent in a minimal environment.
-OPTIONAL_IMPORTS = {'seaborn', 'matplotlib', 'plotly', 'dask', 'distro',
-                    'regex', 'Bio', 'openpyxl',
-                    'xlsxwriter', 'humanize'}
+# Third-party imports that may legitimately be absent.  Everything else a script
+# imports is a run requirement of conda_build/meta.yaml, and an environment that
+# lacks one is incomplete: that used to SKIP here (seaborn, matplotlib, plotly,
+# dask, regex, Bio, openpyxl, xlsxwriter and humanize were all listed), so a
+# half-installed environment passed this suite.  Now it fails, naming the module.
+#   weasyprint  in the recipe, but imported lazily and only to write the PDF beside
+#               the step 1 HTML report; section_report skips the PDF when absent
+#   distro      not in the recipe; step 2 imports it inside a try/except for the
+#               Linux distribution name in the summary and falls back without it
+OPTIONAL_IMPORTS = {'weasyprint', 'distro'}
 
 PASS, FAIL = [], []
 
@@ -113,6 +119,11 @@ def section_cli():
                 if missing in OPTIONAL_IMPORTS:
                     print(f'  SKIP  {name} {flag}   (optional dependency {missing} absent)')
                     continue
+                check(f'{name} {flag}', False,
+                      f'cannot import {missing!r}, a run requirement of conda_build/meta.yaml: '
+                      f'this environment is incomplete and the script cannot run in it\n'
+                      f'        {out[-200:]}')
+                continue
             check(f'{name} {flag}', ok, out[-300:])
             if flag == '--version' and ok:
                 token = out.split()

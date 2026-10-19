@@ -78,7 +78,12 @@ class Annotation():
         source_of_chrom = {}
         for each in sorted(gbk_list):
             try: #IF gbk provided as path variable copy local
-                records = SeqIO.to_dict(SeqIO.parse(each, "genbank"))
+                # An explicit handle: under LC_ALL=C a path argument is opened
+                # as ASCII on Linux, and an accented author name in a REFERENCE
+                # line then raised UnicodeDecodeError; the handle also closes
+                # (the path form left a ResourceWarning).
+                with open(each, encoding='utf-8', errors='replace') as handle:
+                    records = SeqIO.to_dict(SeqIO.parse(handle, "genbank"))
             except (FileNotFoundError, PermissionError, OSError) as e:
                 print(f"Warning: Could not process file {each}: {e}")
                 continue
@@ -181,7 +186,9 @@ class Annotation():
 
         checked = mismatched = uncheckable = no_translation = no_product = total = 0
         try:
-            for record in SeqIO.parse(gbk_path, "genbank"):
+            with open(gbk_path, encoding='utf-8', errors='replace') as handle:
+                gbk_records = list(SeqIO.parse(handle, "genbank"))
+            for record in gbk_records:
                 for feature in record.features:
                     if feature.type != "CDS":
                         continue
